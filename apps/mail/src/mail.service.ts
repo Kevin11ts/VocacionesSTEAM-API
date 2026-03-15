@@ -9,10 +9,19 @@ export class MailService {
 
   constructor(private configService: ConfigService) {
     const apiKey = this.configService.get<string>('RESEND_API_KEY');
+    if (!apiKey) {
+      this.logger.error('CRITICAL: RESEND_API_KEY is not defined in environment variables');
+      // No inicializamos Resend si no hay clave para evitar el crash del microservicio
+      return;
+    }
     this.resend = new Resend(apiKey);
   }
 
   async sendOtpEmail(email: string, code: string, purpose: string) {
+    if (!this.resend) {
+      this.logger.error('Cannot send email: Resend client not initialized (missing API Key)');
+      return;
+    }
     const subject = purpose === 'register' ? 'Verifica tu cuenta en STEAM Vocations' : 'Recupera tu contraseña';
     
     const html = `
