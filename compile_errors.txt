@@ -1,0 +1,17 @@
+apps/ai/src/ai.controller.spec.ts(19,27): error TS2339: Property 'getHello' does not exist on type 'AiController'.
+apps/ai/test/app.e2e-spec.ts(19,12): error TS2349: This expression is not callable.
+  Type '{ default: SuperTestStatic; Test: typeof Test; agent: typeof TestAgent & ((app?: App | undefined, options?: AgentOptions | undefined) => TestAgent<...>); }' has no call signatures.
+apps/api-gateway/test/app.e2e-spec.ts(19,12): error TS2349: This expression is not callable.
+  Type '{ default: SuperTestStatic; Test: typeof Test; agent: typeof TestAgent & ((app?: App | undefined, options?: AgentOptions | undefined) => TestAgent<...>); }' has no call signatures.
+apps/auth/src/auth.controller.spec.ts(19,29): error TS2339: Property 'getHello' does not exist on type 'AuthController'.
+apps/auth/test/app.e2e-spec.ts(19,12): error TS2349: This expression is not callable.
+  Type '{ default: SuperTestStatic; Test: typeof Test; agent: typeof TestAgent & ((app?: App | undefined, options?: AgentOptions | undefined) => TestAgent<...>); }' has no call signatures.
+apps/mail/src/mail.controller.spec.ts(19,29): error TS2339: Property 'getHello' does not exist on type 'MailController'.
+apps/mail/test/app.e2e-spec.ts(19,12): error TS2349: This expression is not callable.
+  Type '{ default: SuperTestStatic; Test: typeof Test; agent: typeof TestAgent & ((app?: App | undefined, options?: AgentOptions | undefined) => TestAgent<...>); }' has no call signatures.
+apps/tests/src/tests.controller.spec.ts(19,30): error TS2339: Property 'getHello' does not exist on type 'TestsController'.
+apps/tests/test/app.e2e-spec.ts(19,12): error TS2349: This expression is not callable.
+  Type '{ default: SuperTestStatic; Test: typeof Test; agent: typeof TestAgent & ((app?: App | undefined, options?: AgentOptions | undefined) => TestAgent<...>); }' has no call signatures.
+apps/users/src/users.controller.spec.ts(19,30): error TS2339: Property 'getHello' does not exist on type 'UsersController'.
+apps/users/test/app.e2e-spec.ts(19,12): error TS2349: This expression is not callable.
+  Type '{ default: SuperTestStatic; Test: typeof Test; agent: typeof TestAgent & ((app?: App | undefined, options?: AgentOptions | undefined) => TestAgent<...>); }' has no call signatures.
