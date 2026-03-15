@@ -1,7 +1,7 @@
 import { Controller, Post, Get, Body, Inject, UseGuards, Req, Res } from '@nestjs/common';
 import { ClientProxy } from '@nestjs/microservices';
 import { ApiTags, ApiOperation, ApiResponse, ApiBody } from '@nestjs/swagger';
-import { RegisterDto, VerifyOtpDto, LoginDto } from '@app/common';
+import { RegisterDto, VerifyOtpDto, LoginDto, ForgotPasswordDto, ResetPasswordDto } from '@app/common';
 import { lastValueFrom } from 'rxjs';
 import { AuthGuard } from '@nestjs/passport';
 import type { Request, Response } from 'express';
@@ -33,6 +33,22 @@ export class AuthGatewayController {
   @ApiBody({ type: LoginDto })
   async login(@Body() loginDto: LoginDto) {
     return lastValueFrom(this.authClient.send({ cmd: 'auth.login' }, loginDto));
+  }
+
+  @Post('forgot-password')
+  @ApiOperation({ summary: 'Request a password recovery OTP' })
+  @ApiResponse({ status: 200, description: 'OTP sent to the registered email if it exists.' })
+  @ApiBody({ type: ForgotPasswordDto })
+  async forgotPassword(@Body() forgotPasswordDto: ForgotPasswordDto) {
+    return lastValueFrom(this.authClient.send({ cmd: 'auth.forgot-password' }, forgotPasswordDto));
+  }
+
+  @Post('reset-password')
+  @ApiOperation({ summary: 'Reset password using OTP' })
+  @ApiResponse({ status: 200, description: 'Password updated successfully.' })
+  @ApiBody({ type: ResetPasswordDto })
+  async resetPassword(@Body() resetPasswordDto: ResetPasswordDto) {
+    return lastValueFrom(this.authClient.send({ cmd: 'auth.reset-password' }, resetPasswordDto));
   }
 
   @Get('google')

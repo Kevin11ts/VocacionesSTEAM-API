@@ -1,7 +1,7 @@
 import { Injectable, Inject } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { RegisterDto, VerifyOtpDto, LoginDto, User, OtpCode, UserSettings } from '@app/common';
+import { RegisterDto, VerifyOtpDto, LoginDto, ForgotPasswordDto, ResetPasswordDto, User, OtpCode, UserSettings } from '@app/common';
 import { JwtService } from '@nestjs/jwt';
 import { ClientProxy, RpcException } from '@nestjs/microservices';
 import * as bcrypt from 'bcrypt';
@@ -75,6 +75,43 @@ export class AuthService {
 
     const token = this.jwtService.sign({ sub: user.id, email: user.email, role: user.role });
     return { accessToken: token, user };
+  }
+
+  async forgotPassword(data: ForgotPasswordDto) {
+    const user = await this.userRepository.findOne({ where: { email: data.email } });
+    if (!user) {
+      // Respuesta genérica para no revelar si el correo existe
+      return { message: `If ${data.email} is registered, an OTP has been sent.` };
+    }
+
+    // Solo usuarios con contraseña (no exclusivamente OAuth) pueden recuperarla
+    if (!user.password) {
+      throw new RpcException('This account uses Google sign-in. Password recovery is not available.');
+    }
+
+    return this.generateAndSendOtp(data.email, 'recovery');
+  }
+
+  async resetPassword(data: ResetPasswordDto) {
+    const otpRecord = await this.otpRepository.findOne({
+      where: { email: data.email, code: data.code, purpose: 'recovery' },
+    });
+
+    if (!otpRecord) throw new RpcException('Invalid OTP code');
+    if (new Date() > otpRecord.expiresAt) {
+      await this.otpRepository.remove(otpRecord);
+      throw new RpcException('OTP expired');
+    }
+
+    await this.otpRepository.remove(otpRecord);
+
+    const user = await this.userRepository.findOne({ where: { email: data.email } });
+    if (!user) throw new RpcException('User not found');
+
+    user.password = await bcrypt.hash(data.newPassword, 10);
+    await this.userRepository.save(user);
+
+    return { message: 'Password updated successfully' };
   }
 
   private async generateAndSendOtp(email: string, purpose: 'register' | 'recovery') {

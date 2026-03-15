@@ -1,4 +1,4 @@
-import { IsEmail, IsString, MinLength, Length, IsEnum } from 'class-validator';
+import { IsEmail, IsString, MinLength, Length, IsEnum, IsNotEmpty } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 
 export class RegisterDto {
@@ -41,4 +41,27 @@ export class LoginDto {
   @IsString()
   @MinLength(6)
   password: string;
+}
+
+export class ForgotPasswordDto {
+  @ApiProperty({ example: 'correo@ejemplo.com', description: 'Correo electrónico registrado' })
+  @IsEmail()
+  email: string;
+}
+
+export class ResetPasswordDto {
+  @ApiProperty({ example: 'correo@ejemplo.com', description: 'Correo electrónico registrado' })
+  @IsEmail()
+  email: string;
+
+  @ApiProperty({ example: '123456', description: 'Código OTP de 6 dígitos enviado por correo' })
+  @IsString()
+  @Length(6, 6)
+  code: string;
+
+  @ApiProperty({ example: 'NuevaPassword123!', description: 'Nueva contraseña (mínimo 6 caracteres)' })
+  @IsString()
+  @MinLength(6)
+  @IsNotEmpty()
+  newPassword: string;
 }
