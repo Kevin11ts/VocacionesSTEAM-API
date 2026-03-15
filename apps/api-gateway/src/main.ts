@@ -8,7 +8,8 @@ import { RpcToHttpExceptionFilter } from './filters/rpc-exception.filter';
 async function bootstrap() {
   const app = await NestFactory.create(ApiGatewayModule);
   app.setGlobalPrefix('api/v1');
-  app.enableCors({ origin: process.env.CORS_ORIGIN || '*' });
+  const corsOrigins = (process.env.CORS_ORIGIN || '*').split(',').map(o => o.trim());
+  app.enableCors({ origin: corsOrigins.length === 1 ? corsOrigins[0] : corsOrigins });
 
   app.useGlobalFilters(new RpcToHttpExceptionFilter());
 
