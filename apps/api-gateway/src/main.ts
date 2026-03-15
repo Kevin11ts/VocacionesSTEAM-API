@@ -3,11 +3,14 @@ import { ApiGatewayModule } from './api-gateway.module';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { RpcToHttpExceptionFilter } from './filters/rpc-exception.filter';
 
 async function bootstrap() {
   const app = await NestFactory.create(ApiGatewayModule);
   app.setGlobalPrefix('api/v1');
   app.enableCors({ origin: process.env.CORS_ORIGIN || '*' });
+
+  app.useGlobalFilters(new RpcToHttpExceptionFilter());
 
   app.useGlobalPipes(
     new ValidationPipe({
