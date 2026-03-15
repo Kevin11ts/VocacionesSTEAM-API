@@ -25,7 +25,7 @@ import { GoogleStrategy } from './strategies/google.strategy';
         inject: [ConfigService],
         useFactory: (config: ConfigService) => ({
           transport: Transport.TCP,
-          options: { host: '127.0.0.1', port: config.get<number>('PORT_AUTH', 3001) },
+          options: { host: config.get<string>('HOST_AUTH', '127.0.0.1'), port: config.get<number>('PORT_AUTH', 3001) },
         }),
       },
       {
@@ -33,7 +33,7 @@ import { GoogleStrategy } from './strategies/google.strategy';
         inject: [ConfigService],
         useFactory: (config: ConfigService) => ({
           transport: Transport.TCP,
-          options: { host: '127.0.0.1', port: config.get<number>('PORT_USERS', 3002) },
+          options: { host: config.get<string>('HOST_USERS', '127.0.0.1'), port: config.get<number>('PORT_USERS', 3002) },
         }),
       },
       {
@@ -41,7 +41,7 @@ import { GoogleStrategy } from './strategies/google.strategy';
         inject: [ConfigService],
         useFactory: (config: ConfigService) => ({
           transport: Transport.TCP,
-          options: { host: '127.0.0.1', port: config.get<number>('PORT_TESTS', 3003) },
+          options: { host: config.get<string>('HOST_TESTS', '127.0.0.1'), port: config.get<number>('PORT_TESTS', 3003) },
         }),
       },
     ]),

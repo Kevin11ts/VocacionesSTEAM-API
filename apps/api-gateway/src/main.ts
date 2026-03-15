@@ -7,7 +7,7 @@ import { ConfigService } from '@nestjs/config';
 async function bootstrap() {
   const app = await NestFactory.create(ApiGatewayModule);
   app.setGlobalPrefix('api/v1');
-  app.enableCors({ origin: '*' }); // Ajustar para producción
+  app.enableCors({ origin: process.env.CORS_ORIGIN || '*' });
 
   app.useGlobalPipes(
     new ValidationPipe({

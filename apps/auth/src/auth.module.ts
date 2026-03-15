@@ -25,7 +25,7 @@ import { ClientsModule, Transport } from '@nestjs/microservices';
         useFactory: (config: ConfigService) => ({
           transport: Transport.TCP,
           options: {
-            host: '127.0.0.1', // Debe coincidir con el host del servicio de correo
+            host: config.get<string>('HOST_MAIL', '127.0.0.1'),
             port: config.get<number>('PORT_MAIL', 3005),
           },
         }),

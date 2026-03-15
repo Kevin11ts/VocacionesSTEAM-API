@@ -4,19 +4,42 @@ import { AiService } from './ai.service';
 
 describe('AiController', () => {
   let aiController: AiController;
+  let aiService: AiService;
 
   beforeEach(async () => {
     const app: TestingModule = await Test.createTestingModule({
       controllers: [AiController],
-      providers: [AiService],
+      providers: [
+        {
+          provide: AiService,
+          useValue: {
+            generateRecommendations: jest.fn(),
+          },
+        },
+      ],
     }).compile();
 
     aiController = app.get<AiController>(AiController);
+    aiService = app.get<AiService>(AiService);
   });
 
-  describe('root', () => {
-    it('should return "Hello World!"', () => {
-      expect(aiController.getHello()).toBe('Hello World!');
+  describe('generateRecommendations', () => {
+    it('should call aiService.generateRecommendations with the correct arguments', async () => {
+      const payload = {
+        locationInput: 'Ciudad de México',
+        scores: { math: 90, science: 85 },
+      };
+
+      const expectedResult = { recommendations: ['Engineering', 'Physics'] };
+      jest.spyOn(aiService, 'generateRecommendations').mockResolvedValue(expectedResult as any);
+
+      const result = await aiController.generateRecommendations(payload);
+
+      expect(aiService.generateRecommendations).toHaveBeenCalledWith(
+        payload.locationInput,
+        payload.scores,
+      );
+      expect(result).toEqual(expectedResult);
     });
   });
 });
