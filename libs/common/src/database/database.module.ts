@@ -14,7 +14,7 @@ import { ConfigService } from '@nestjs/config';
             type: 'postgres',
             url: databaseUrl,
             autoLoadEntities: true,
-            synchronize: false,
+            synchronize: true, // Crea tablas automáticamente en Railway
             ssl: { rejectUnauthorized: false }, // Requerido por Railway
           };
         }
@@ -27,7 +27,7 @@ import { ConfigService } from '@nestjs/config';
           password: configService.get<string>('DB_PASSWORD', 'postgres'),
           database: configService.get<string>('DB_NAME', 'steam_vocations'),
           autoLoadEntities: true,
-          synchronize: false,
+          synchronize: true,
         };
       },
     }),
