@@ -1,10 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import * as brevo from '@getbrevo/brevo';
+import { BrevoClient } from '@getbrevo/brevo';
 
 @Injectable()
 export class MailService {
-  private apiInstance: brevo.TransactionalEmailsApi;
+  private apiInstance: BrevoClient;
   private readonly logger = new Logger(MailService.name);
 
   constructor(private configService: ConfigService) {
@@ -15,8 +15,7 @@ export class MailService {
       return;
     }
 
-    this.apiInstance = new brevo.TransactionalEmailsApi();
-    this.apiInstance.setApiKey(brevo.TransactionalEmailsApiApiKeys.apiKey, apiKey);
+    this.apiInstance = new BrevoClient({ apiKey });
   }
 
   async sendOtpEmail(email: string, code: string, purpose: string) {
@@ -42,20 +41,19 @@ export class MailService {
       </div>
     `;
 
-    const sendSmtpEmail = new brevo.SendSmtpEmail();
-    sendSmtpEmail.subject = subject;
-    sendSmtpEmail.htmlContent = htmlContent;
-    sendSmtpEmail.sender = { name: 'STEAM Vocations', email: 'vocaciones.steam0@gmail.com' };
-    sendSmtpEmail.to = [{ email: email }];
-
     try {
       this.logger.log(`Enviando correo real vía Brevo API a: ${email}`);
-      const data = await this.apiInstance.sendTransacEmail(sendSmtpEmail);
-      this.logger.log('Correo enviado satisfactoriamente: ' + JSON.stringify(data.body));
+      const data = await this.apiInstance.transactionalEmails.sendTransacEmail({
+        subject,
+        htmlContent,
+        sender: { name: 'STEAM Vocations', email: 'vocaciones.steam0@gmail.com' },
+        to: [{ email }],
+      });
+      this.logger.log('Correo enviado satisfactoriamente: ' + JSON.stringify(data));
     } catch (error) {
       this.logger.error(`Falló el envío de correo a ${email}`, error);
-      if (error.response && error.response.body) {
-        this.logger.error('Brevo Error Detail:', JSON.stringify(error.response.body));
+      if (error.body) {
+        this.logger.error('Brevo Error Detail:', JSON.stringify(error.body));
       }
     }
   }
