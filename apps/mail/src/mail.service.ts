@@ -1,45 +1,33 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import * as nodemailer from 'nodemailer';
+import * as brevo from '@getbrevo/brevo';
 
 @Injectable()
 export class MailService {
-  private transporter: nodemailer.Transporter;
+  private apiInstance: brevo.TransactionalEmailsApi;
   private readonly logger = new Logger(MailService.name);
 
   constructor(private configService: ConfigService) {
-    const user = this.configService.get<string>('MAIL_USER');
-    const pass = this.configService.get<string>('MAIL_PASS');
+    const apiKey = this.configService.get<string>('BREVO_API_KEY');
 
-    if (!user || !pass) {
-      this.logger.error('CRITICAL: MAIL_USER or MAIL_PASS is not defined in environment variables');
+    if (!apiKey) {
+      this.logger.error('CRITICAL: BREVO_API_KEY is not defined in environment variables');
       return;
     }
 
-    this.transporter = nodemailer.createTransport({
-      host: 'smtp.gmail.com',
-      port: 465,
-      secure: true, // true para puerto 465 (SSL/TLS)
-      auth: {
-        user,
-        pass,
-      },
-      tls: {
-        rejectUnauthorized: false // Ayuda en algunos entornos de red restringidos
-      },
-      connectionTimeout: 10000, // 10 segundos
-    });
+    this.apiInstance = new brevo.TransactionalEmailsApi();
+    this.apiInstance.setApiKey(brevo.TransactionalEmailsApiApiKeys.apiKey, apiKey);
   }
 
   async sendOtpEmail(email: string, code: string, purpose: string) {
-    if (!this.transporter) {
-      this.logger.error('Cannot send email: Transporter not initialized (missing credentials)');
+    if (!this.apiInstance) {
+      this.logger.error('Cannot send email: Brevo API instance not initialized (missing API Key)');
       return;
     }
 
     const subject = purpose === 'register' ? 'Verifica tu cuenta en STEAM Vocations' : 'Recupera tu contraseña';
     
-    const html = `
+    const htmlContent = `
       <div style="font-family: Arial, sans-serif; padding: 20px; color: #333; max-width: 600px; margin: auto; border: 1px solid #eee; border-radius: 8px;">
         <h2 style="color: #4A90E2; border-bottom: 2px solid #4A90E2; padding-bottom: 10px;">STEAM Vocations</h2>
         <p style="font-size: 16px;">Hola,</p>
@@ -54,19 +42,21 @@ export class MailService {
       </div>
     `;
 
-    try {
-      this.logger.log(`Enviando correo real vía Gmail SMTP a: ${email}`);
-      
-      const info = await this.transporter.sendMail({
-        from: `"STEAM Vocations" <${this.configService.get('MAIL_USER')}>`,
-        to: email,
-        subject,
-        html,
-      });
+    const sendSmtpEmail = new brevo.SendSmtpEmail();
+    sendSmtpEmail.subject = subject;
+    sendSmtpEmail.htmlContent = htmlContent;
+    sendSmtpEmail.sender = { name: 'STEAM Vocations', email: 'vocaciones.steam0@gmail.com' };
+    sendSmtpEmail.to = [{ email: email }];
 
-      this.logger.log('Correo enviado satisfactoriamente: ' + info.messageId);
+    try {
+      this.logger.log(`Enviando correo real vía Brevo API a: ${email}`);
+      const data = await this.apiInstance.sendTransacEmail(sendSmtpEmail);
+      this.logger.log('Correo enviado satisfactoriamente: ' + JSON.stringify(data.body));
     } catch (error) {
       this.logger.error(`Falló el envío de correo a ${email}`, error);
+      if (error.response && error.response.body) {
+        this.logger.error('Brevo Error Detail:', JSON.stringify(error.response.body));
+      }
     }
   }
 }
