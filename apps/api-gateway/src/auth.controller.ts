@@ -63,9 +63,11 @@ export class AuthGatewayController {
   @ApiOperation({ summary: 'Google OAuth2 callback' })
   async googleAuthRedirect(@Req() req: Request, @Res() res: Response) {
     const oauthRes = await lastValueFrom(this.authClient.send({ cmd: 'auth.oauth-login' }, req.user));
-    // El frontend típicamente espera una redirección con el token en los parámetros de consulta o cookies.
-    // Asumiendo que la PWA está en https://steamvocations.app/oauth-callback
-    const frontendUrl = 'https://steamvocations.app/oauth-callback';
+    
+    // Obtenemos la URL del frontend desde las variables de entorno o usamos la por defecto
+    const configService = (req as any).app.get('ConfigService');
+    const frontendUrl = configService.get('FRONTEND_URL', 'https://steamvocations.app/oauth-callback');
+    
     return res.redirect(`${frontendUrl}?token=${oauthRes.accessToken}`);
   }
 }
