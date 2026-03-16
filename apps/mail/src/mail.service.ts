@@ -17,11 +17,17 @@ export class MailService {
     }
 
     this.transporter = nodemailer.createTransport({
-      service: 'gmail',
+      host: 'smtp.gmail.com',
+      port: 587,
+      secure: false, // true para puerto 465, false para otros
       auth: {
         user,
         pass,
       },
+      tls: {
+        rejectUnauthorized: false // Ayuda en algunos entornos de red restringidos
+      },
+      connectionTimeout: 10000, // 10 segundos
     });
   }
 
