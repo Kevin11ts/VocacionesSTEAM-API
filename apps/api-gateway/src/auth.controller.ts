@@ -4,12 +4,16 @@ import { ApiTags, ApiOperation, ApiResponse, ApiBody } from '@nestjs/swagger';
 import { RegisterDto, VerifyOtpDto, LoginDto, ForgotPasswordDto, ResetPasswordDto } from '@app/common';
 import { lastValueFrom } from 'rxjs';
 import { AuthGuard } from '@nestjs/passport';
+import { ConfigService } from '@nestjs/config';
 import type { Request, Response } from 'express';
 
 @ApiTags('auth')
 @Controller('auth')
 export class AuthGatewayController {
-  constructor(@Inject('AUTH_SERVICE') private readonly authClient: ClientProxy) {}
+  constructor(
+    @Inject('AUTH_SERVICE') private readonly authClient: ClientProxy,
+    private readonly configService: ConfigService,
+  ) {}
 
   @Post('register')
   @ApiOperation({ summary: 'Register a new user' })
@@ -65,8 +69,7 @@ export class AuthGatewayController {
     const oauthRes = await lastValueFrom(this.authClient.send({ cmd: 'auth.oauth-login' }, req.user));
     
     // Obtenemos la URL del frontend desde las variables de entorno o usamos la por defecto
-    const configService = (req as any).app.get('ConfigService');
-    const frontendUrl = configService.get('FRONTEND_URL', 'https://steamvocations.app/oauth-callback');
+    const frontendUrl = this.configService.get('FRONTEND_URL', 'https://steamvocations.app/oauth-callback');
     
     return res.redirect(`${frontendUrl}?token=${oauthRes.accessToken}`);
   }
