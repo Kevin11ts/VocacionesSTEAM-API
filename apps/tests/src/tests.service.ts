@@ -24,6 +24,27 @@ export class TestsService {
     });
   }
 
+  async createQuestion(data: any) {
+    const question = this.questionRepository.create(data);
+    return this.questionRepository.save(question);
+  }
+
+  async updateQuestion(id: string, data: any) {
+    const question = await this.questionRepository.findOne({ where: { id }, relations: ['options'] });
+    if (!question) throw new RpcException('Question not found');
+
+    // Si se envían nuevas opciones, TypeORM las actualizará por el cascade: true
+    Object.assign(question, data);
+    return this.questionRepository.save(question);
+  }
+
+  async deleteQuestion(id: string) {
+    const question = await this.questionRepository.findOne({ where: { id } });
+    if (!question) throw new RpcException('Question not found');
+    await this.questionRepository.remove(question);
+    return { success: true, message: 'Question deleted' };
+  }
+
   async submitTest(userId: string, answers: Record<string, string>, locationInput?: string) {
     const user = await this.userRepository.findOne({ where: { id: userId } });
     if (!user) throw new RpcException('User not found');

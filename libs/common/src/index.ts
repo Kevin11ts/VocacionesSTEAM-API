@@ -9,4 +9,5 @@ export * from './database/database.module';
 export * from './config/config.module';
 
 export * from './dto/auth.dto';
+export * from './dto/test.dto';
 export * from './common.module';

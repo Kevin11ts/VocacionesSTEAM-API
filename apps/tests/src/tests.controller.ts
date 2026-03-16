@@ -11,6 +11,21 @@ export class TestsController {
     return this.testsService.getQuestions();
   }
 
+  @MessagePattern({ cmd: 'tests.create-question' })
+  async createQuestion(@Payload() data: any) {
+    return this.testsService.createQuestion(data);
+  }
+
+  @MessagePattern({ cmd: 'tests.update-question' })
+  async updateQuestion(@Payload() payload: { id: string, data: any }) {
+    return this.testsService.updateQuestion(payload.id, payload.data);
+  }
+
+  @MessagePattern({ cmd: 'tests.delete-question' })
+  async deleteQuestion(@Payload() payload: { id: string }) {
+    return this.testsService.deleteQuestion(payload.id);
+  }
+
   @MessagePattern({ cmd: 'tests.submit' })
   async submitTest(
     @Payload() payload: { 

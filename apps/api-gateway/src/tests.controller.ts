@@ -1,9 +1,10 @@
-import { Controller, Post, Get, Body, Inject, UseGuards } from '@nestjs/common';
+import { Controller, Post, Get, Body, Inject, UseGuards, Put, Param, Delete } from '@nestjs/common';
 import { ClientProxy } from '@nestjs/microservices';
-import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiBody, ApiProperty } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiBody, ApiProperty, ApiParam } from '@nestjs/swagger';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { CurrentUser } from './decorators/current-user.decorator';
 import { lastValueFrom } from 'rxjs';
+import { CreateQuestionDto, UpdateQuestionDto } from '@app/common';
 
 class SubmitTestDto {
   @ApiProperty({ example: { '1': 'A', '2': 'C' } })
@@ -25,6 +26,31 @@ export class TestsGatewayController {
   @ApiResponse({ status: 200, description: 'List of questions and their options' })
   async getQuestions() {
     return lastValueFrom(this.testsClient.send({ cmd: 'tests.get-questions' }, {}));
+  }
+
+  @Post('questions')
+  @ApiOperation({ summary: 'Create a new test question' })
+  @ApiResponse({ status: 201, description: 'Question created' })
+  @ApiBody({ type: CreateQuestionDto })
+  async createQuestion(@Body() data: CreateQuestionDto) {
+    return lastValueFrom(this.testsClient.send({ cmd: 'tests.create-question' }, data));
+  }
+
+  @Put('questions/:id')
+  @ApiOperation({ summary: 'Update an existing test question' })
+  @ApiResponse({ status: 200, description: 'Question updated' })
+  @ApiParam({ name: 'id', description: 'Question UUID' })
+  @ApiBody({ type: UpdateQuestionDto })
+  async updateQuestion(@Param('id') id: string, @Body() data: UpdateQuestionDto) {
+    return lastValueFrom(this.testsClient.send({ cmd: 'tests.update-question' }, { id, data }));
+  }
+
+  @Delete('questions/:id')
+  @ApiOperation({ summary: 'Delete a test question' })
+  @ApiResponse({ status: 200, description: 'Question deleted' })
+  @ApiParam({ name: 'id', description: 'Question UUID' })
+  async deleteQuestion(@Param('id') id: string) {
+    return lastValueFrom(this.testsClient.send({ cmd: 'tests.delete-question' }, { id }));
   }
 
   @Post('submit')
