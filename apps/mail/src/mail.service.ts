@@ -1,27 +1,36 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Resend } from 'resend';
+import * as nodemailer from 'nodemailer';
 
 @Injectable()
 export class MailService {
-  private resend: Resend;
+  private transporter: nodemailer.Transporter;
   private readonly logger = new Logger(MailService.name);
 
   constructor(private configService: ConfigService) {
-    const apiKey = this.configService.get<string>('RESEND_API_KEY');
-    if (!apiKey) {
-      this.logger.error('CRITICAL: RESEND_API_KEY is not defined in environment variables');
-      // No inicializamos Resend si no hay clave para evitar el crash del microservicio
+    const user = this.configService.get<string>('MAIL_USER');
+    const pass = this.configService.get<string>('MAIL_PASS');
+
+    if (!user || !pass) {
+      this.logger.error('CRITICAL: MAIL_USER or MAIL_PASS is not defined in environment variables');
       return;
     }
-    this.resend = new Resend(apiKey);
+
+    this.transporter = nodemailer.createTransport({
+      service: 'gmail',
+      auth: {
+        user,
+        pass,
+      },
+    });
   }
 
   async sendOtpEmail(email: string, code: string, purpose: string) {
-    if (!this.resend) {
-      this.logger.error('Cannot send email: Resend client not initialized (missing API Key)');
+    if (!this.transporter) {
+      this.logger.error('Cannot send email: Transporter not initialized (missing credentials)');
       return;
     }
+
     const subject = purpose === 'register' ? 'Verifica tu cuenta en STEAM Vocations' : 'Recupera tu contraseña';
     
     const html = `
@@ -40,20 +49,16 @@ export class MailService {
     `;
 
     try {
-      this.logger.log(`Enviando correal real via Resend a: ${email}`);
+      this.logger.log(`Enviando correo real vía Gmail SMTP a: ${email}`);
       
-      const { data, error } = await this.resend.emails.send({
-        from: 'STEAM Vocations <onboarding@resend.dev>', // Usando el dominio de prueba de Resend por defecto
-        to: [email],
+      const info = await this.transporter.sendMail({
+        from: `"STEAM Vocations" <${this.configService.get('MAIL_USER')}>`,
+        to: email,
         subject,
         html,
       });
 
-      if (error) {
-        this.logger.error('Error de Resend:', error);
-      } else {
-        this.logger.log('Correo enviado satisfactoriamente:', data.id);
-      }
+      this.logger.log('Correo enviado satisfactoriamente: ' + info.messageId);
     } catch (error) {
       this.logger.error(`Falló el envío de correo a ${email}`, error);
     }
