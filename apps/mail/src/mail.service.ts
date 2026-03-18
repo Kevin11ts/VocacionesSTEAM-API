@@ -27,18 +27,89 @@ export class MailService {
     const subject = purpose === 'register' ? 'Verifica tu cuenta en STEAM Vocations' : 'Recupera tu contraseña';
     
     const htmlContent = `
-      <div style="font-family: Arial, sans-serif; padding: 20px; color: #333; max-width: 600px; margin: auto; border: 1px solid #eee; border-radius: 8px;">
-        <h2 style="color: #4A90E2; border-bottom: 2px solid #4A90E2; padding-bottom: 10px;">STEAM Vocations</h2>
-        <p style="font-size: 16px;">Hola,</p>
-        <p style="font-size: 16px;">Recibimos una solicitud para ${purpose === 'register' ? 'crear una cuenta' : 'restablecer tu contraseña'}.</p>
-        <div style="background-color: #f4f4f4; padding: 20px; text-align: center; border-radius: 5px; margin: 20px 0;">
-          <p style="margin: 0; font-size: 14px; color: #666;">Tu código de verificación es:</p>
-          <strong style="font-size: 32px; color: #4A90E2; letter-spacing: 5px;">${code}</strong>
-        </div>
-        <p style="font-size: 14px; color: #888;">Este código expira en 15 minutos.</p>
-        <hr style="border: 0; border-top: 1px solid #eee; margin: 20px 0;">
-        <p style="font-size: 12px; color: #aaa; text-align: center;">Si no solicitaste este correo, puedes ignorarlo con seguridad.</p>
-      </div>
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Código de Verificación - Vocaciones STEAM</title>
+</head>
+<body style="margin: 0; padding: 0; background-color: #F4F6F8; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; -webkit-font-smoothing: antialiased;">
+
+  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color: #F4F6F8; padding: 40px 20px;">
+    <tr>
+      <td align="center">
+        
+        <table width="100%" max-width="600" cellpadding="0" cellspacing="0" border="0" style="max-width: 600px; background-color: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 10px 30px rgba(0,0,0,0.05);">
+          
+          <tr>
+            <td>
+              <table width="100%" cellpadding="0" cellspacing="0" border="0" style="height: 6px;">
+                <tr>
+                  <td width="25%" bgcolor="#07B1C9"></td> <td width="25%" bgcolor="#4DB046"></td> <td width="25%" bgcolor="#F88718"></td> <td width="25%" bgcolor="#E8372D"></td> 
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <tr>
+            <td style="padding: 40px 40px 30px 40px; text-align: center;">
+              
+              <a href="https://tu-dominio-steam.com" target="_blank" style="text-decoration: none; outline: none; display: inline-block; margin-bottom: 25px;">
+                <span style="font-size: 24px; font-weight: 800; color: #2C3E50; letter-spacing: 1px;">
+                  <span style="color: #07B1C9">S</span><span style="color: #4DB046">T</span><span style="color: #F88718">E</span><span style="color: #E8372D">A</span><span style="color: #07B1C9">M</span>
+                </span>
+              </a>
+
+              <h1 style="margin: 0 0 15px 0; font-size: 24px; color: #2C3E50; font-weight: 800;">
+                ${purpose === 'register' ? 'Tu código de acceso' : 'Recupera tu contraseña'}
+              </h1>
+              <p style="margin: 0 0 30px 0; font-size: 16px; color: #4A5568; line-height: 1.6;">
+                Hola,<br>Recibimos una solicitud para ${purpose === 'register' ? 'crear una cuenta' : 'restablecer tu contraseña'}. Usa el siguiente código de un solo uso (OTP) para verificar tu identidad y acceder a tu cuenta.
+              </p>
+
+              <div style="background-color: #F0FBFC; border: 2px dashed #07B1C9; border-radius: 12px; padding: 25px 20px; margin-bottom: 25px;">
+                <p style="margin: 0; font-size: 38px; font-weight: 800; color: #07B1C9; letter-spacing: 10px;"><strong>${code}</strong></p>
+              </div>
+
+              <p style="margin: 0 0 30px 0; font-size: 14px; color: #7F8C8D;">
+                Este código es válido por 15 minutos.
+              </p>
+
+              <table width="100%" cellpadding="0" cellspacing="0" border="0">
+                <tr>
+                  <td style="border-top: 1px solid #EAEAEA; padding-top: 30px;"></td>
+                </tr>
+              </table>
+
+              <p style="margin: 0 0 15px 0; font-size: 12px; color: #A0AEC0; line-height: 1.5; text-align: left;">
+                <strong>Seguridad:</strong> No compartas este código con nadie. Si no solicitaste este acceso, puedes ignorar este correo de forma segura.
+              </p>
+              <p style="margin: 0; font-size: 12px; color: #A0AEC0; line-height: 1.5; text-align: left;">
+                El equipo de <strong>Vocaciones STEAM</strong> nunca te contactará por otro medio para pedirte contraseñas o códigos de inicio de sesión. Ten cuidado con los intentos de phishing.
+              </p>
+
+            </td>
+          </tr>
+        </table>
+
+        <table width="100%" max-width="600" cellpadding="0" cellspacing="0" border="0" style="max-width: 600px;">
+          <tr>
+            <td style="padding: 20px; text-align: center;">
+              <p style="margin: 0; font-size: 12px; color: #9aa3af;">
+                © 2026 Vocaciones STEAM. Todos los derechos reservados.<br>
+                Córdoba, Veracruz, México.
+              </p>
+            </td>
+          </tr>
+        </table>
+
+      </td>
+    </tr>
+  </table>
+
+</body>
+</html>
     `;
 
     try {
@@ -46,11 +117,11 @@ export class MailService {
       const data = await this.apiInstance.transactionalEmails.sendTransacEmail({
         subject,
         htmlContent,
-        sender: { name: 'STEAM Vocations', email: 'vocaciones.steam0@gmail.com' },
+        sender: { name: 'Vocaciones STEAM', email: 'vocaciones.steam0@gmail.com' },
         to: [{ email }],
       });
       this.logger.log('Correo enviado satisfactoriamente: ' + JSON.stringify(data));
-    } catch (error) {
+    } catch (error: any) {
       this.logger.error(`Falló el envío de correo a ${email}`, error);
       if (error.body) {
         this.logger.error('Brevo Error Detail:', JSON.stringify(error.body));
