@@ -31,7 +31,18 @@ export class RpcToHttpExceptionFilter {
       'Unauthorized': HttpStatus.UNAUTHORIZED,
     };
 
-    statusCode = errorMap[message] ?? HttpStatus.BAD_REQUEST;
+    statusCode = errorMap[message];
+
+    // Mapeo dinámico para mensajes con variables
+    if (!statusCode) {
+      if (message.includes('locked') || message.includes('Too many failed attempts')) {
+        statusCode = HttpStatus.TOO_MANY_REQUESTS;
+      } else if (message.includes('Invalid OTP code')) {
+        statusCode = HttpStatus.BAD_REQUEST;
+      } else {
+        statusCode = HttpStatus.BAD_REQUEST;
+      }
+    }
 
     response.status(statusCode).json({
       statusCode,

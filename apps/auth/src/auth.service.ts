@@ -38,7 +38,24 @@ export class AuthService {
       where: { email: data.email, code: data.code, purpose: data.purpose } 
     });
 
-    if (!otpRecord) throw new RpcException('Invalid OTP code');
+    if (!otpRecord) {
+      // Intentar encontrar cualquier OTP para este email y propósito para incrementar intentos
+      const anyOtp = await this.otpRepository.findOne({ 
+        where: { email: data.email, purpose: data.purpose } 
+      });
+      
+      if (anyOtp) {
+        anyOtp.attempts += 1;
+        if (anyOtp.attempts >= 3) {
+          await this.otpRepository.remove(anyOtp);
+          throw new RpcException('Too many failed attempts. Please request a new OTP.');
+        }
+        await this.otpRepository.save(anyOtp);
+        throw new RpcException(`Invalid OTP code. ${3 - anyOtp.attempts} attempts remaining.`);
+      }
+      throw new RpcException('Invalid OTP code');
+    }
+
     if (new Date() > otpRecord.expiresAt) {
       await this.otpRepository.remove(otpRecord);
       throw new RpcException('OTP expired');
@@ -64,10 +81,29 @@ export class AuthService {
       throw new RpcException('Invalid credentials');
     }
 
+    // Verificar si la cuenta está bloqueada
+    if (user.lockUntil && user.lockUntil > new Date()) {
+      const remainingMinutes = Math.ceil((user.lockUntil.getTime() - new Date().getTime()) / 60000);
+      throw new RpcException(`Account is locked. Try again in ${remainingMinutes} minutes.`);
+    }
+
     const isMatch = await bcrypt.compare(data.password, user.password);
     if (!isMatch) {
+      user.failedLoginAttempts += 1;
+      if (user.failedLoginAttempts >= 5) {
+        const lockDuration = 30; // 30 minutos
+        user.lockUntil = new Date(Date.now() + lockDuration * 60000);
+        await this.userRepository.save(user);
+        throw new RpcException(`Too many failed attempts. Account locked for ${lockDuration} minutes.`);
+      }
+      await this.userRepository.save(user);
       throw new RpcException('Invalid credentials');
     }
+
+    // Resetear intentos en login exitoso
+    user.failedLoginAttempts = 0;
+    user.lockUntil = null;
+    await this.userRepository.save(user);
 
     if (!user.isEmailVerified) {
       throw new RpcException('Email is not verified');
@@ -97,7 +133,23 @@ export class AuthService {
       where: { email: data.email, code: data.code, purpose: 'recovery' },
     });
 
-    if (!otpRecord) throw new RpcException('Invalid OTP code');
+    if (!otpRecord) {
+      const anyOtp = await this.otpRepository.findOne({ 
+        where: { email: data.email, purpose: 'recovery' } 
+      });
+      
+      if (anyOtp) {
+        anyOtp.attempts += 1;
+        if (anyOtp.attempts >= 3) {
+          await this.otpRepository.remove(anyOtp);
+          throw new RpcException('Too many failed attempts. Please request a new OTP.');
+        }
+        await this.otpRepository.save(anyOtp);
+        throw new RpcException(`Invalid OTP code. ${3 - anyOtp.attempts} attempts remaining.`);
+      }
+      throw new RpcException('Invalid OTP code');
+    }
+
     if (new Date() > otpRecord.expiresAt) {
       await this.otpRepository.remove(otpRecord);
       throw new RpcException('OTP expired');

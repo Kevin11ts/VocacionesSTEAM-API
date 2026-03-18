@@ -34,6 +34,12 @@ export class User {
   @Column({ nullable: true })
   googleId?: string; 
 
+  @Column({ default: 0 })
+  failedLoginAttempts: number;
+
+  @Column({ type: 'timestamp', nullable: true })
+  lockUntil?: Date | null;
+
   @OneToOne(() => UserSettings, settings => settings.user, { cascade: true })
   settings: UserSettings;
 
