@@ -1,7 +1,7 @@
 import { Controller, Post, Get, Body, Inject, UseGuards, Req, Res } from '@nestjs/common';
 import { ClientProxy } from '@nestjs/microservices';
 import { ApiTags, ApiOperation, ApiResponse, ApiBody } from '@nestjs/swagger';
-import { RegisterDto, VerifyOtpDto, LoginDto, ForgotPasswordDto, ResetPasswordDto } from '@app/common';
+import { RegisterDto, VerifyOtpDto, VerifyLoginDto, LoginDto, ForgotPasswordDto, ResetPasswordDto } from '@app/common';
 import { lastValueFrom } from 'rxjs';
 import { AuthGuard } from '@nestjs/passport';
 import { ConfigService } from '@nestjs/config';
@@ -24,11 +24,20 @@ export class AuthGatewayController {
   }
 
   @Post('verify-otp')
-  @ApiOperation({ summary: 'Verify OTP code (for register, login or recovery)' })
+  @ApiOperation({ summary: 'Verify OTP code (for register or recovery)' })
   @ApiResponse({ status: 200, description: 'OTP Verified, JWT returned (except for recovery).' })
   @ApiBody({ type: VerifyOtpDto })
   async verifyOtp(@Body() verifyOtpDto: VerifyOtpDto) {
     return lastValueFrom(this.authClient.send({ cmd: 'auth.verify-otp' }, verifyOtpDto));
+  }
+
+  @Post('verify-login')
+  @ApiOperation({ summary: 'Verify OTP code for login (Step 2)' })
+  @ApiResponse({ status: 200, description: 'OTP Verified, JWT returned.' })
+  @ApiBody({ type: VerifyLoginDto })
+  async verifyLogin(@Body() verifyLoginDto: VerifyLoginDto) {
+    const payload = { ...verifyLoginDto, purpose: 'login' };
+    return lastValueFrom(this.authClient.send({ cmd: 'auth.verify-otp' }, payload));
   }
 
   @Post('login')

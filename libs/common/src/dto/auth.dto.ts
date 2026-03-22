@@ -17,6 +17,17 @@ export class RegisterDto {
   password: string;
 }
 
+export class VerifyLoginDto {
+  @ApiProperty({ example: 'correo@ejemplo.com', description: 'Correo electrónico' })
+  @IsEmail()
+  email: string;
+
+  @ApiProperty({ example: '123456', description: 'Código OTP de 6 dígitos enviado por correo' })
+  @IsString()
+  @Length(6, 6)
+  code: string;
+}
+
 export class VerifyOtpDto {
   @ApiProperty({ example: 'correo@ejemplo.com', description: 'Correo electrónico asociado al código' })
   @IsEmail()
