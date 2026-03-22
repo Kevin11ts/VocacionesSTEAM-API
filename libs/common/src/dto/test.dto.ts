@@ -48,6 +48,7 @@ export class UpdateQuestionDto {
   @IsNumber()
   order?: number;
 
+  @ApiProperty({ example: 'inactivo', required: false })
   @IsOptional()
   @IsString()
   status?: string;
