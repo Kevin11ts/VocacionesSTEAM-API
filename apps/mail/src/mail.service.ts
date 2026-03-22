@@ -24,6 +24,8 @@ export class MailService {
       return;
     }
 
+    const frontendUrl = this.configService.get<string>('FRONTEND_URL', 'https://pwa-vocaciones-steam.vercel.app');
+
     let subject = '';
     let title = '';
     let messageText = '';
@@ -71,7 +73,7 @@ export class MailService {
           <tr>
             <td style="padding: 40px 40px 30px 40px; text-align: center;">
               
-              <a href="https://tu-dominio-steam.com" target="_blank" style="text-decoration: none; outline: none; display: inline-block; margin-bottom: 25px;">
+              <a href="${frontendUrl}" target="_blank" style="text-decoration: none; outline: none; display: inline-block; margin-bottom: 25px;">
                 <span style="font-size: 24px; font-weight: 800; color: #2C3E50; letter-spacing: 1px;">
                   <span style="color: #07B1C9">S</span><span style="color: #4DB046">T</span><span style="color: #F88718">E</span><span style="color: #E8372D">A</span><span style="color: #07B1C9">M</span>
                 </span>
