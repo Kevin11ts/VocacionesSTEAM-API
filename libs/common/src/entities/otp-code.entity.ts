@@ -11,7 +11,7 @@ export class OtpCode {
   @Column()
   code: string;
 
-  @Column({ type: 'enum', enum: ['register', 'recovery'] })
+  @Column({ type: 'enum', enum: ['register', 'recovery', 'login'] })
   purpose: string;
 
   @Column()

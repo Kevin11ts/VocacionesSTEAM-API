@@ -24,7 +24,23 @@ export class MailService {
       return;
     }
 
-    const subject = purpose === 'register' ? 'Verifica tu cuenta en STEAM Vocations' : 'Recupera tu contraseña';
+    let subject = '';
+    let title = '';
+    let messageText = '';
+
+    if (purpose === 'register') {
+      subject = 'Verifica tu cuenta en STEAM Vocaciones';
+      title = 'Tu código de acceso';
+      messageText = 'crear una cuenta';
+    } else if (purpose === 'login') {
+      subject = 'Código para iniciar sesión en STEAM Vocaciones';
+      title = 'Inicia sesión';
+      messageText = 'iniciar sesión en tu cuenta';
+    } else {
+      subject = 'Recupera tu contraseña';
+      title = 'Recupera tu contraseña';
+      messageText = 'restablecer tu contraseña';
+    }
     
     const htmlContent = `
 <!DOCTYPE html>
@@ -62,10 +78,10 @@ export class MailService {
               </a>
 
               <h1 style="margin: 0 0 15px 0; font-size: 24px; color: #2C3E50; font-weight: 800;">
-                ${purpose === 'register' ? 'Tu código de acceso' : 'Recupera tu contraseña'}
+                ${title}
               </h1>
               <p style="margin: 0 0 30px 0; font-size: 16px; color: #4A5568; line-height: 1.6;">
-                Hola,<br>Recibimos una solicitud para ${purpose === 'register' ? 'crear una cuenta' : 'restablecer tu contraseña'}. Usa el siguiente código de un solo uso (OTP) para verificar tu identidad y acceder a tu cuenta.
+                Hola,<br>Recibimos una solicitud para ${messageText}. Usa el siguiente código de un solo uso (OTP) para verificar tu identidad y acceder a tu cuenta.
               </p>
 
               <div style="background-color: #F0FBFC; border: 2px dashed #07B1C9; border-radius: 12px; padding: 25px 20px; margin-bottom: 25px;">

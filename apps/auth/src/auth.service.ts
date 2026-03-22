@@ -109,8 +109,7 @@ export class AuthService {
       throw new RpcException('Email is not verified');
     }
 
-    const token = this.jwtService.sign({ sub: user.id, email: user.email, role: user.role });
-    return { accessToken: token, user };
+    return this.generateAndSendOtp(user.email, 'login');
   }
 
   async forgotPassword(data: ForgotPasswordDto) {
@@ -166,7 +165,7 @@ export class AuthService {
     return { message: 'Password updated successfully' };
   }
 
-  private async generateAndSendOtp(email: string, purpose: 'register' | 'recovery') {
+  private async generateAndSendOtp(email: string, purpose: 'register' | 'recovery' | 'login') {
     const code = Math.floor(100000 + Math.random() * 900000).toString(); // 6 dígitos
     const expiresAt = new Date();
     expiresAt.setMinutes(expiresAt.getMinutes() + 15);

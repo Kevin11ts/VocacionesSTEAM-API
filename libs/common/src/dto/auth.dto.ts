@@ -27,8 +27,8 @@ export class VerifyOtpDto {
   @Length(6, 6)
   code: string;
 
-  @ApiProperty({ example: 'register', enum: ['register', 'recovery'], description: 'Propósito del código' })
-  @IsEnum(['register', 'recovery'])
+  @ApiProperty({ example: 'register', enum: ['register', 'recovery', 'login'], description: 'Propósito del código' })
+  @IsEnum(['register', 'recovery', 'login'])
   purpose: string;
 }
 

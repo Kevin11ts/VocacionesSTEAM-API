@@ -24,16 +24,16 @@ export class AuthGatewayController {
   }
 
   @Post('verify-otp')
-  @ApiOperation({ summary: 'Verify OTP code' })
-  @ApiResponse({ status: 200, description: 'OTP Verified, JWT returned.' })
+  @ApiOperation({ summary: 'Verify OTP code (for register, login or recovery)' })
+  @ApiResponse({ status: 200, description: 'OTP Verified, JWT returned (except for recovery).' })
   @ApiBody({ type: VerifyOtpDto })
   async verifyOtp(@Body() verifyOtpDto: VerifyOtpDto) {
     return lastValueFrom(this.authClient.send({ cmd: 'auth.verify-otp' }, verifyOtpDto));
   }
 
   @Post('login')
-  @ApiOperation({ summary: 'Login user' })
-  @ApiResponse({ status: 200, description: 'Login successful, JWT returned.' })
+  @ApiOperation({ summary: 'Login user (Step 1)' })
+  @ApiResponse({ status: 200, description: 'Credentials verified. OTP sent to email.' })
   @ApiBody({ type: LoginDto })
   async login(@Body() loginDto: LoginDto) {
     return lastValueFrom(this.authClient.send({ cmd: 'auth.login' }, loginDto));
