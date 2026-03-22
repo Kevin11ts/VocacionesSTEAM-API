@@ -27,6 +27,11 @@ export class CreateQuestionDto {
   @IsOptional()
   order?: number;
 
+  @ApiProperty({ example: 'activo', required: false })
+  @IsString()
+  @IsOptional()
+  status?: string;
+
   @ApiProperty({ type: [CreateOptionDto] })
   @IsArray()
   @ValidateNested({ each: true })
@@ -42,6 +47,10 @@ export class UpdateQuestionDto {
   @IsOptional()
   @IsNumber()
   order?: number;
+
+  @IsOptional()
+  @IsString()
+  status?: string;
 
   @IsOptional()
   @IsArray()
