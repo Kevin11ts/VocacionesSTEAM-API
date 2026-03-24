@@ -1,14 +1,15 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { User, UserSettings, VocationalTest, AiRecommendation } from '@app/common';
+import { User, UserSettings, VocationalTest, AiRecommendation, SavedUniversity } from '@app/common';
 import { RpcException } from '@nestjs/microservices';
 
 @Injectable()
 export class UsersService {
   constructor(
     @InjectRepository(User) private readonly userRepository: Repository<User>,
-    @InjectRepository(UserSettings) private readonly settingsRepository: Repository<UserSettings>
+    @InjectRepository(UserSettings) private readonly settingsRepository: Repository<UserSettings>,
+    @InjectRepository(SavedUniversity) private readonly savedUniversityRepository: Repository<SavedUniversity>
   ) {}
 
   async getProfile(userId: string) {
@@ -86,5 +87,37 @@ export class UsersService {
 
     const { password, ...safeUser } = user;
     return { message: 'Settings updated', user: safeUser };
+  }
+
+  // --- SAVED UNIVERSITIES ---
+
+  async saveUniversity(userId: string, data: any) {
+    const user = await this.userRepository.findOne({ where: { id: userId } });
+    if (!user) throw new RpcException('User not found');
+
+    const savedUniversity = this.savedUniversityRepository.create({
+      ...data,
+      user,
+    });
+
+    return this.savedUniversityRepository.save(savedUniversity);
+  }
+
+  async getSavedUniversities(userId: string) {
+    return this.savedUniversityRepository.find({
+      where: { user: { id: userId } },
+      order: { createdAt: 'DESC' },
+    });
+  }
+
+  async removeSavedUniversity(userId: string, universityId: string) {
+    const savedUniversity = await this.savedUniversityRepository.findOne({
+      where: { id: universityId, user: { id: userId } },
+    });
+
+    if (!savedUniversity) throw new RpcException('Saved university not found');
+
+    await this.savedUniversityRepository.remove(savedUniversity);
+    return { message: 'Saved university removed successfully' };
   }
 }

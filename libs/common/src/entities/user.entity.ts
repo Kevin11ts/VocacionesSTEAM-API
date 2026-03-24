@@ -1,5 +1,6 @@
 import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, OneToMany, OneToOne } from 'typeorm';
 import { VocationalTest } from './vocational-test.entity';
+import { SavedUniversity } from './saved-university.entity';
 import { UserSettings } from './user-settings.entity';
 
 @Entity('users')
@@ -45,6 +46,9 @@ export class User {
 
   @OneToMany(() => VocationalTest, test => test.user)
   tests: VocationalTest[];
+
+  @OneToMany(() => SavedUniversity, saved => saved.user)
+  savedUniversities: SavedUniversity[];
 
   @CreateDateColumn()
   createdAt: Date;

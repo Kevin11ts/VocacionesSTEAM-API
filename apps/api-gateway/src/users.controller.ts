@@ -1,8 +1,9 @@
-import { Controller, Get, Put, Body, Inject, UseGuards, Param, Delete } from '@nestjs/common';
+import { Controller, Get, Put, Body, Inject, UseGuards, Param, Delete, Post } from '@nestjs/common';
 import { ClientProxy } from '@nestjs/microservices';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiBody, ApiParam } from '@nestjs/swagger';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { RolesGuard } from './guards/roles.guard';
+import { CreateSavedUniversityDto } from '@app/common';
 import { Roles } from './decorators/roles.decorator';
 import { CurrentUser } from './decorators/current-user.decorator';
 import { lastValueFrom } from 'rxjs';
@@ -32,6 +33,31 @@ export class UsersGatewayController {
   @ApiOperation({ summary: 'Update user settings' })
   async updateSettings(@CurrentUser() user: any, @Body() settings: any) {
     return lastValueFrom(this.usersClient.send({ cmd: 'users.update-settings' }, { userId: user.id, settings }));
+  }
+
+  // --- SAVED UNIVERSITIES ---
+
+  @Post('saved-universities')
+  @ApiOperation({ summary: 'Save a recommended university' })
+  @ApiBody({ type: CreateSavedUniversityDto })
+  @ApiResponse({ status: 201, description: 'University saved successfully' })
+  async saveUniversity(@CurrentUser() user: any, @Body() data: CreateSavedUniversityDto) {
+    return lastValueFrom(this.usersClient.send({ cmd: 'users.save-university' }, { userId: user.id, data }));
+  }
+
+  @Get('saved-universities')
+  @ApiOperation({ summary: 'Get saved universities for the current user' })
+  @ApiResponse({ status: 200, description: 'List of saved universities' })
+  async getSavedUniversities(@CurrentUser() user: any) {
+    return lastValueFrom(this.usersClient.send({ cmd: 'users.get-saved-universities' }, user.id));
+  }
+
+  @Delete('saved-universities/:universityId')
+  @ApiOperation({ summary: 'Remove a saved university' })
+  @ApiParam({ name: 'universityId', description: 'ID of the saved university' })
+  @ApiResponse({ status: 200, description: 'University removed successfully' })
+  async removeSavedUniversity(@CurrentUser() user: any, @Param('universityId') universityId: string) {
+    return lastValueFrom(this.usersClient.send({ cmd: 'users.remove-saved-university' }, { userId: user.id, universityId }));
   }
 
   // --- ADMINISTRADOR CRUD ---

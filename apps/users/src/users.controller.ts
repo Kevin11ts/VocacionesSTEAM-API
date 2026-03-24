@@ -22,6 +22,23 @@ export class UsersController {
     return this.usersService.updateSettings(payload.userId, payload.settings);
   }
 
+  // --- SAVED UNIVERSITIES ---
+
+  @MessagePattern({ cmd: 'users.save-university' })
+  async saveUniversity(@Payload() payload: { userId: string; data: any }) {
+    return this.usersService.saveUniversity(payload.userId, payload.data);
+  }
+
+  @MessagePattern({ cmd: 'users.get-saved-universities' })
+  async getSavedUniversities(@Payload() userId: string) {
+    return this.usersService.getSavedUniversities(userId);
+  }
+
+  @MessagePattern({ cmd: 'users.remove-saved-university' })
+  async removeSavedUniversity(@Payload() payload: { userId: string; universityId: string }) {
+    return this.usersService.removeSavedUniversity(payload.userId, payload.universityId);
+  }
+
   // --- ADMINISTRADOR CRUD ---
 
   @MessagePattern({ cmd: 'users.find-all' })
