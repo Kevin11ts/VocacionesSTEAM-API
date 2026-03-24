@@ -1,7 +1,7 @@
 import { Module } from '@nestjs/common';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
-import { CommonModule, User, OtpCode, UserSettings, VocationalTest, AiRecommendation } from '@app/common';
+import { CommonModule, User, OtpCode, UserSettings, VocationalTest, AiRecommendation, SavedUniversity } from '@app/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { JwtModule } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
@@ -10,7 +10,7 @@ import { ClientsModule, Transport } from '@nestjs/microservices';
 @Module({
   imports: [
     CommonModule,
-    TypeOrmModule.forFeature([User, OtpCode, UserSettings, VocationalTest, AiRecommendation]),
+    TypeOrmModule.forFeature([User, OtpCode, UserSettings, VocationalTest, AiRecommendation, SavedUniversity]),
     JwtModule.registerAsync({
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({

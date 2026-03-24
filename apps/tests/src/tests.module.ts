@@ -1,7 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TestsController } from './tests.controller';
 import { TestsService } from './tests.service';
-import { CommonModule, User, VocationalTest, AiRecommendation, Question, Option, UserSettings, OtpCode } from '@app/common';
+import { CommonModule, User, VocationalTest, AiRecommendation, Question, Option, UserSettings, OtpCode, SavedUniversity } from '@app/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ClientsModule, Transport } from '@nestjs/microservices';
 import { ConfigService } from '@nestjs/config';
@@ -9,7 +9,7 @@ import { ConfigService } from '@nestjs/config';
 @Module({
   imports: [
     CommonModule,
-    TypeOrmModule.forFeature([User, VocationalTest, AiRecommendation, Question, Option, UserSettings, OtpCode]),
+    TypeOrmModule.forFeature([User, VocationalTest, AiRecommendation, Question, Option, UserSettings, OtpCode, SavedUniversity]),
     ClientsModule.registerAsync([
       {
         name: 'AI_SERVICE',
