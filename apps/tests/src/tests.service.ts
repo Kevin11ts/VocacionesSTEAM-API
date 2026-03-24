@@ -39,7 +39,7 @@ export class TestsService {
   }
 
   async deleteQuestion(id: string) {
-    const question = await this.questionRepository.findOne({ where: { id } });
+    const question = await this.questionRepository.findOne({ where: { id }, relations: ['options'] });
     if (!question) throw new RpcException('Question not found');
     await this.questionRepository.remove(question);
     return { success: true, message: 'Question deleted' };

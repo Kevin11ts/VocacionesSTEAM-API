@@ -13,7 +13,7 @@ export class AuthGatewayController {
   constructor(
     @Inject('AUTH_SERVICE') private readonly authClient: ClientProxy,
     private readonly configService: ConfigService,
-  ) {}
+  ) { }
 
   @Post('register')
   @ApiOperation({ summary: 'Register a new user' })
@@ -76,10 +76,10 @@ export class AuthGatewayController {
   @ApiOperation({ summary: 'Google OAuth2 callback' })
   async googleAuthRedirect(@Req() req: Request, @Res() res: Response) {
     const oauthRes = await lastValueFrom(this.authClient.send({ cmd: 'auth.oauth-login' }, req.user));
-    
+
     // Obtenemos la URL del frontend desde las variables de entorno o usamos la por defecto
     const frontendUrl = this.configService.get('FRONTEND_URL', 'https://steamvocations.app/oauth-callback');
-    
+
     return res.redirect(`${frontendUrl}?token=${oauthRes.accessToken}`);
   }
 }

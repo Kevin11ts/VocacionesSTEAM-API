@@ -43,7 +43,7 @@ export class MailService {
       title = 'Recupera tu contraseña';
       messageText = 'restablecer tu contraseña';
     }
-    
+
     const htmlContent = `
 <!DOCTYPE html>
 <html lang="es">
