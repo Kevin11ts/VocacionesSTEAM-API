@@ -6,10 +6,12 @@ export * from './entities/ai-recommendation.entity';
 export * from './entities/question.entity';
 export * from './entities/option.entity';
 export * from './entities/saved-university.entity';
+export * from './entities/saved-course.entity';
 export * from './database/database.module';
 export * from './config/config.module';
 
 export * from './dto/auth.dto';
 export * from './dto/test.dto';
 export * from './dto/saved-university.dto';
+export * from './dto/saved-course.dto';
 export * from './common.module';

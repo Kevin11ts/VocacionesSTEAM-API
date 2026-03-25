@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { User, UserSettings, VocationalTest, AiRecommendation, SavedUniversity } from '@app/common';
+import { User, UserSettings, VocationalTest, AiRecommendation, SavedUniversity, SavedCourse } from '@app/common';
 import { RpcException } from '@nestjs/microservices';
 
 @Injectable()
@@ -9,7 +9,8 @@ export class UsersService {
   constructor(
     @InjectRepository(User) private readonly userRepository: Repository<User>,
     @InjectRepository(UserSettings) private readonly settingsRepository: Repository<UserSettings>,
-    @InjectRepository(SavedUniversity) private readonly savedUniversityRepository: Repository<SavedUniversity>
+    @InjectRepository(SavedUniversity) private readonly savedUniversityRepository: Repository<SavedUniversity>,
+    @InjectRepository(SavedCourse) private readonly savedCourseRepository: Repository<SavedCourse>
   ) {}
 
   async getProfile(userId: string) {
@@ -119,5 +120,37 @@ export class UsersService {
 
     await this.savedUniversityRepository.remove(savedUniversity);
     return { message: 'Saved university removed successfully' };
+  }
+
+  // --- SAVED COURSES ---
+
+  async saveCourse(userId: string, data: any) {
+    const user = await this.userRepository.findOne({ where: { id: userId } });
+    if (!user) throw new RpcException('User not found');
+
+    const savedCourse = this.savedCourseRepository.create({
+      ...data,
+      user,
+    });
+
+    return this.savedCourseRepository.save(savedCourse);
+  }
+
+  async getSavedCourses(userId: string) {
+    return this.savedCourseRepository.find({
+      where: { user: { id: userId } },
+      order: { createdAt: 'DESC' },
+    });
+  }
+
+  async removeSavedCourse(userId: string, courseId: string) {
+    const savedCourse = await this.savedCourseRepository.findOne({
+      where: { id: courseId, user: { id: userId } },
+    });
+
+    if (!savedCourse) throw new RpcException('Saved course not found');
+
+    await this.savedCourseRepository.remove(savedCourse);
+    return { message: 'Saved course removed successfully' };
   }
 }

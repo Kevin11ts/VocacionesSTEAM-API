@@ -3,7 +3,7 @@ import { ClientProxy } from '@nestjs/microservices';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiBody, ApiParam } from '@nestjs/swagger';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { RolesGuard } from './guards/roles.guard';
-import { CreateSavedUniversityDto } from '@app/common';
+import { CreateSavedUniversityDto, CreateSavedCourseDto } from '@app/common';
 import { Roles } from './decorators/roles.decorator';
 import { CurrentUser } from './decorators/current-user.decorator';
 import { lastValueFrom } from 'rxjs';
@@ -58,6 +58,31 @@ export class UsersGatewayController {
   @ApiResponse({ status: 200, description: 'University removed successfully' })
   async removeSavedUniversity(@CurrentUser() user: any, @Param('universityId') universityId: string) {
     return lastValueFrom(this.usersClient.send({ cmd: 'users.remove-saved-university' }, { userId: user.id, universityId }));
+  }
+
+  // --- SAVED COURSES ---
+
+  @Post('saved-courses')
+  @ApiOperation({ summary: 'Save a recommended course' })
+  @ApiBody({ type: CreateSavedCourseDto })
+  @ApiResponse({ status: 201, description: 'Course saved successfully' })
+  async saveCourse(@CurrentUser() user: any, @Body() data: CreateSavedCourseDto) {
+    return lastValueFrom(this.usersClient.send({ cmd: 'users.save-course' }, { userId: user.id, data }));
+  }
+
+  @Get('saved-courses')
+  @ApiOperation({ summary: 'Get saved courses for the current user' })
+  @ApiResponse({ status: 200, description: 'List of saved courses' })
+  async getSavedCourses(@CurrentUser() user: any) {
+    return lastValueFrom(this.usersClient.send({ cmd: 'users.get-saved-courses' }, user.id));
+  }
+
+  @Delete('saved-courses/:courseId')
+  @ApiOperation({ summary: 'Remove a saved course' })
+  @ApiParam({ name: 'courseId', description: 'ID of the saved course' })
+  @ApiResponse({ status: 200, description: 'Course removed successfully' })
+  async removeSavedCourse(@CurrentUser() user: any, @Param('courseId') courseId: string) {
+    return lastValueFrom(this.usersClient.send({ cmd: 'users.remove-saved-course' }, { userId: user.id, courseId }));
   }
 
   // --- ADMINISTRADOR CRUD ---

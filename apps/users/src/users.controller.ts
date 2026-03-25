@@ -39,6 +39,23 @@ export class UsersController {
     return this.usersService.removeSavedUniversity(payload.userId, payload.universityId);
   }
 
+  // --- SAVED COURSES ---
+
+  @MessagePattern({ cmd: 'users.save-course' })
+  async saveCourse(@Payload() payload: { userId: string; data: any }) {
+    return this.usersService.saveCourse(payload.userId, payload.data);
+  }
+
+  @MessagePattern({ cmd: 'users.get-saved-courses' })
+  async getSavedCourses(@Payload() userId: string) {
+    return this.usersService.getSavedCourses(userId);
+  }
+
+  @MessagePattern({ cmd: 'users.remove-saved-course' })
+  async removeSavedCourse(@Payload() payload: { userId: string; courseId: string }) {
+    return this.usersService.removeSavedCourse(payload.userId, payload.courseId);
+  }
+
   // --- ADMINISTRADOR CRUD ---
 
   @MessagePattern({ cmd: 'users.find-all' })
