@@ -29,4 +29,9 @@ export class CreateSavedUniversityDto {
   @IsString()
   @IsOptional()
   studyPlan?: string;
+
+  @ApiProperty({ example: 'https://www.unam.mx', required: false })
+  @IsString()
+  @IsOptional()
+  officialWebsite?: string;
 }

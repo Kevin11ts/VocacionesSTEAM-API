@@ -27,6 +27,9 @@ export class SavedUniversity {
   @Column({ type: 'text', nullable: true })
   studyPlan: string;
 
+  @Column({ nullable: true })
+  officialWebsite: string;
+
   @CreateDateColumn()
   createdAt: Date;
 
