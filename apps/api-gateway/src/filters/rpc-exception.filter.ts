@@ -1,4 +1,4 @@
-import { Catch, ArgumentsHost, HttpStatus } from '@nestjs/common';
+import { Catch, ArgumentsHost, HttpStatus, HttpException } from '@nestjs/common';
 import { BaseRpcExceptionFilter, RpcException } from '@nestjs/microservices';
 import { Observable, throwError } from 'rxjs';
 import { Response } from 'express';
@@ -16,8 +16,19 @@ export class RpcToHttpExceptionFilter {
     if (exception instanceof RpcException) {
       const rpcError = exception.getError();
       message = typeof rpcError === 'string' ? rpcError : (rpcError as any)?.message ?? message;
+    } else if (exception instanceof HttpException) {
+      const httpRes = exception.getResponse() as any;
+      statusCode = exception.getStatus();
+      message = httpRes.message || exception.message;
     } else if (exception?.message) {
       message = exception.message;
+    }
+
+    if (Array.isArray(message)) {
+      return response.status(statusCode).json({
+        statusCode,
+        message,
+      });
     }
 
     // Mapear mensajes conocidos a códigos HTTP apropiados
