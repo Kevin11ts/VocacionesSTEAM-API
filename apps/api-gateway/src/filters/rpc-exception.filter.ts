@@ -10,7 +10,7 @@ export class RpcToHttpExceptionFilter {
     const response = ctx.getResponse<Response>();
 
     // Extraer el mensaje de error
-    let message = 'Internal server error';
+    let message = 'Error interno del servidor';
     let statusCode = HttpStatus.INTERNAL_SERVER_ERROR;
 
     if (exception instanceof RpcException) {
@@ -22,22 +22,22 @@ export class RpcToHttpExceptionFilter {
 
     // Mapear mensajes conocidos a códigos HTTP apropiados
     const errorMap: Record<string, number> = {
-      'Email already in use': HttpStatus.CONFLICT,
-      'Invalid OTP code': HttpStatus.BAD_REQUEST,
-      'OTP expired': HttpStatus.BAD_REQUEST,
-      'User not found': HttpStatus.NOT_FOUND,
-      'Invalid credentials': HttpStatus.UNAUTHORIZED,
-      'Email is not verified': HttpStatus.FORBIDDEN,
-      'Unauthorized': HttpStatus.UNAUTHORIZED,
+      'El correo electrónico ya está en uso': HttpStatus.CONFLICT,
+      'Código inválido': HttpStatus.BAD_REQUEST,
+      'El código ha expirado': HttpStatus.BAD_REQUEST,
+      'Usuario no encontrado': HttpStatus.NOT_FOUND,
+      'Credenciales inválidas': HttpStatus.UNAUTHORIZED,
+      'El correo no está verificado': HttpStatus.FORBIDDEN,
+      'No autorizado': HttpStatus.UNAUTHORIZED,
     };
 
     statusCode = errorMap[message];
 
     // Mapeo dinámico para mensajes con variables
     if (!statusCode) {
-      if (message.includes('locked') || message.includes('Too many failed attempts')) {
+      if (message.includes('bloqueada') || message.includes('Demasiados intentos fallidos')) {
         statusCode = HttpStatus.TOO_MANY_REQUESTS;
-      } else if (message.includes('Invalid OTP code')) {
+      } else if (message.includes('Código inválido')) {
         statusCode = HttpStatus.BAD_REQUEST;
       } else {
         statusCode = HttpStatus.BAD_REQUEST;
