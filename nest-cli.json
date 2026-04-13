@@ -55,7 +55,6 @@
         "tsConfigPath": "apps/mail/tsconfig.app.json"
       }
     },
-
     "tests": {
       "type": "application",
       "root": "apps/tests",
@@ -72,6 +71,15 @@
       "sourceRoot": "apps/users/src",
       "compilerOptions": {
         "tsConfigPath": "apps/users/tsconfig.app.json"
+      }
+    },
+    "monolith": {
+      "type": "application",
+      "root": "apps/api-gateway",
+      "entryFile": "main.prod",
+      "sourceRoot": "apps/api-gateway/src",
+      "compilerOptions": {
+        "tsConfigPath": "apps/api-gateway/tsconfig.app.json"
       }
     }
   }

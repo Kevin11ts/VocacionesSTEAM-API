@@ -1,0 +1,35 @@
+# ==========================================
+# Etapa 1: Build (Construcción)
+# ==========================================
+FROM node:20-alpine AS builder
+
+WORKDIR /app
+
+# Copiar dependencias primero para aprovechar caché
+COPY package*.json ./
+RUN npm ci
+
+# Copiar fuente y compilar
+COPY . .
+# Construimos el proyecto monolith definido en nest-cli.json
+RUN npm run build:monolith
+
+# ==========================================
+# Etapa 2: Producción (Ligera)
+# ==========================================
+FROM node:20-alpine
+
+WORKDIR /app
+
+# Instalar solo dependencias de producción (ahorra muchísimo espacio)
+COPY package*.json ./
+RUN npm ci --only=production
+
+# Copiar el código compilado desde la etapa 'builder'
+COPY --from=builder /app/dist ./dist
+
+# Puerto que expone Railway
+EXPOSE 3000
+
+# Script para arrancar la versión monolito
+CMD ["npm", "run", "start:monolith"]
