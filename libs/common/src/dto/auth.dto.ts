@@ -76,3 +76,22 @@ export class ResetPasswordDto {
   @IsNotEmpty({ message: 'La nueva contraseña no puede estar vacía' })
   newPassword: string;
 }
+
+export class LoginResponseDto {
+  @ApiProperty({ example: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...', description: 'Token de acceso JWT' })
+  accessToken: string;
+
+  @ApiProperty({
+    description: 'Datos del usuario autenticado',
+    example: {
+      id: 'uuid',
+      email: 'correo@ejemplo.com',
+      fullname: 'Kevin Sandoval',
+      settings: {
+        darkMode: false,
+        language: 'Español'
+      }
+    }
+  })
+  user: any;
+}

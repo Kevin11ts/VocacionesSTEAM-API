@@ -63,7 +63,10 @@ export class AuthService {
 
     await this.otpRepository.remove(otpRecord);
 
-    const user = await this.userRepository.findOne({ where: { email: data.email } });
+    const user = await this.userRepository.findOne({ 
+      where: { email: data.email },
+      relations: ['settings'],
+    });
     if (!user) throw new RpcException('Usuario no encontrado');
 
     if (data.purpose === 'register' && !user.isEmailVerified) {
@@ -185,7 +188,10 @@ export class AuthService {
   }
 
   async oauthLogin(data: { email: string, fullname: string, avatarUrl: string, googleId: string }) {
-    let user = await this.userRepository.findOne({ where: { email: data.email } });
+    let user = await this.userRepository.findOne({ 
+      where: { email: data.email },
+      relations: ['settings'],
+    });
 
     if (!user) {
       user = this.userRepository.create({
@@ -204,6 +210,6 @@ export class AuthService {
     }
 
     const token = this.jwtService.sign({ sub: user.id, email: user.email, role: user.role });
-    return { accessToken: token, user };
+    retuy ya irn { accessToken: token, user };
   }
 }

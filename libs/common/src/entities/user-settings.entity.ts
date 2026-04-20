@@ -11,14 +11,14 @@ export class UserSettings {
   user: User;
 
   @Column({ default: false })
-  darkMode: boolean;
+  darkMode: boolean = false;
 
   @Column({ default: 'Español' })
-  language: string;
+  language: string = 'Español';
 
   @Column({ default: true })
-  pushEnabled: boolean;
+  pushEnabled: boolean = true;
 
   @Column({ default: false })
-  emailMarketing: boolean;
+  emailMarketing: boolean = false;
 }
