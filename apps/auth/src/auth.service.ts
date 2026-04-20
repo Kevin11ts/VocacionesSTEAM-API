@@ -74,8 +74,9 @@ export class AuthService {
       await this.userRepository.save(user);
     }
 
+    const { password: _, ...safeUser } = user;
     const token = this.jwtService.sign({ sub: user.id, email: user.email, role: user.role });
-    return { accessToken: token, user };
+    return { accessToken: token, user: safeUser };
   }
 
   async login(data: LoginDto) {
@@ -209,7 +210,8 @@ export class AuthService {
       await this.userRepository.save(user);
     }
 
+    const { password: _, ...safeUser } = user;
     const token = this.jwtService.sign({ sub: user.id, email: user.email, role: user.role });
-    retuy ya irn { accessToken: token, user };
+    return { accessToken: token, user: safeUser };
   }
 }
