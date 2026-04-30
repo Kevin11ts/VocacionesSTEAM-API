@@ -27,9 +27,9 @@ export class AiService {
     scores: Record<string, number>,
   ): Promise<{ description: string; universities: any[] }> {
     try {
-      this.logger.log('Generando recomendaciones con Gemini 2.0 Flash...');
+      this.logger.log('Generando recomendaciones con Gemini 1.5 Flash...');
       const model = this.geminiTests.getGenerativeModel({
-        model: 'gemini-2.0-flash',
+        model: 'gemini-1.5-flash',
         generationConfig: { responseMimeType: 'application/json' },
       });
 
