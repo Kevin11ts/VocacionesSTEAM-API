@@ -1,4 +1,5 @@
 import { Controller, Post, Get, Body, Inject, UseGuards, Put, Param, Delete } from '@nestjs/common';
+import { IsObject, IsOptional, IsString } from 'class-validator';
 import { ClientProxy } from '@nestjs/microservices';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiBody, ApiProperty, ApiParam } from '@nestjs/swagger';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
@@ -8,9 +9,12 @@ import { CreateQuestionDto, UpdateQuestionDto } from '@app/common';
 
 class SubmitTestDto {
   @ApiProperty({ example: { '1': 'A', '2': 'C' } })
+  @IsObject()
   answers: Record<string, string>;
 
   @ApiProperty({ example: 'Veracruz, México', required: false })
+  @IsOptional()
+  @IsString()
   locationInput?: string;
 }
 
