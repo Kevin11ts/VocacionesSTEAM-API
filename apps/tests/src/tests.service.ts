@@ -1,7 +1,7 @@
 import { Injectable, Inject, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { User, VocationalTest, AiRecommendation, Question, Option, UserSettings, OtpCode } from '@app/common';
+import { User, VocationalTest, AiRecommendation, Question, Option, UserSettings, OtpCode, CreateQuestionDto } from '@app/common';
 import { ClientProxy, RpcException } from '@nestjs/microservices';
 import { lastValueFrom } from 'rxjs';
 
@@ -27,6 +27,15 @@ export class TestsService {
   async createQuestion(data: any) {
     const question = this.questionRepository.create(data);
     return this.questionRepository.save(question);
+  }
+
+  async createBulkQuestions(questions: CreateQuestionDto[]): Promise<any> {
+    const created = [];
+    for (const q of questions) {
+      const result = await this.createQuestion(q);
+      created.push(result);
+    }
+    return { total: created.length, questions: created };
   }
 
   async updateQuestion(id: string, data: any) {

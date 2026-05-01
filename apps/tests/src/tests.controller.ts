@@ -1,4 +1,5 @@
 import { Controller } from '@nestjs/common';
+import { CreateQuestionDto } from '@app/common';
 import { MessagePattern, Payload } from '@nestjs/microservices';
 import { TestsService } from './tests.service';
 
@@ -14,6 +15,11 @@ export class TestsController {
   @MessagePattern({ cmd: 'tests.create-question' })
   async createQuestion(@Payload() data: any) {
     return this.testsService.createQuestion(data);
+  }
+
+  @MessagePattern({ cmd: 'tests.create-bulk-questions' })
+  async createBulkQuestions(@Payload() data: CreateQuestionDto[]) {
+    return this.testsService.createBulkQuestions(data);
   }
 
   @MessagePattern({ cmd: 'tests.update-question' })

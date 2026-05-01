@@ -5,7 +5,7 @@ import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiBody, ApiProperty
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { CurrentUser } from './decorators/current-user.decorator';
 import { lastValueFrom } from 'rxjs';
-import { CreateQuestionDto, UpdateQuestionDto } from '@app/common';
+import { CreateQuestionDto, UpdateQuestionDto, CreateBulkQuestionsDto } from '@app/common';
 
 class SubmitTestDto {
   @ApiProperty({ example: { '1': 'A', '2': 'C' } })
@@ -38,6 +38,19 @@ export class TestsGatewayController {
   @ApiBody({ type: CreateQuestionDto })
   async createQuestion(@Body() data: CreateQuestionDto) {
     return lastValueFrom(this.testsClient.send({ cmd: 'tests.create-question' }, data));
+  }
+
+  @Post('questions/bulk')
+  @ApiOperation({ summary: 'Create multiple questions at once' })
+  @ApiResponse({ status: 201, description: 'Questions created successfully' })
+  @ApiBody({ type: CreateBulkQuestionsDto })
+  async createBulkQuestions(@Body() body: CreateBulkQuestionsDto) {
+    return lastValueFrom(
+      this.testsClient.send(
+        { cmd: 'tests.create-bulk-questions' },
+        body.questions
+      )
+    );
   }
 
   @Put('questions/:id')

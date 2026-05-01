@@ -59,3 +59,11 @@ export class UpdateQuestionDto {
   @Type(() => CreateOptionDto)
   options?: CreateOptionDto[];
 }
+
+export class CreateBulkQuestionsDto {
+  @ApiProperty({ type: [CreateQuestionDto] })
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => CreateQuestionDto)
+  questions: CreateQuestionDto[];
+}
