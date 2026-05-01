@@ -11,17 +11,20 @@ export class AiService {
   private groq: Groq;
 
   constructor(private configService: ConfigService) {
-    this.geminiTests = new GoogleGenerativeAI(
-      this.configService.get<string>('GEMINI_API_KEY_TESTS') || '',
-    );
-    this.geminiUnis = new GoogleGenerativeAI(
-      this.configService.get<string>('GEMINI_API_KEY_UNIS') || '',
-    );
+    // TODO: Descomentar cuando se configure billing en Google Cloud
+    // this.geminiTests = new GoogleGenerativeAI(
+    //   this.configService.get<string>('GEMINI_API_KEY_TESTS') || '',
+    // );
+    // this.geminiUnis = new GoogleGenerativeAI(
+    //   this.configService.get<string>('GEMINI_API_KEY_UNIS') || '',
+    // );
     this.groq = new Groq({
       apiKey: this.configService.get<string>('GROQ_API_KEY') || '',
     });
   }
 
+  // TODO: Descomentar cuando se configure billing en Google Cloud
+  /*
   async generateRecommendations(
     locationInput: string,
     scores: Record<string, number>,
@@ -85,7 +88,7 @@ Reglas importantes:
 - keyDates debe tener fechas aproximadas realistas para 2025-2026
 - websiteUrl debe ser el sitio oficial real de la universidad
 - El JSON debe ser válido y parseable sin modificaciones
-`;
+\`;
 
       const result = await model.generateContent(prompt);
       const responseText = result.response.text();
@@ -97,6 +100,15 @@ Reglas importantes:
       );
       return this.generateRecommendationsFallback(locationInput, scores);
     }
+  }
+  */
+
+  async generateRecommendations(
+    locationInput: string,
+    scores: Record<string, number>,
+  ): Promise<{ description: string; universities: any[] }> {
+    this.logger.log('Generando recomendaciones con Groq...');
+    return this.generateRecommendationsFallback(locationInput, scores);
   }
 
   private async generateRecommendationsFallback(
@@ -111,41 +123,67 @@ Reglas importantes:
         {
           role: 'system',
           content:
-            'Eres un orientador vocacional experto en México. ' +
+            'Eres un orientador vocacional experto en áreas STEAM ' +
+            '(Ciencia, Tecnología, Ingeniería, Arte y Matemáticas) ' +
+            'con amplio conocimiento de universidades en México. ' +
             'Responde ÚNICAMENTE con JSON válido, sin markdown ' +
             'ni texto adicional.',
         },
         {
           role: 'user',
-          content: `
-Genera un perfil vocacional y sugerencias de universidades para 
-un estudiante con estos puntajes STEAM:
+          content: `Un estudiante completó un test vocacional con los 
+siguientes puntajes:
 - Ciencia: ${scores['ciencia'] || 0}
 - Tecnología: ${scores['tecnologia'] || 0}
 - Ingeniería: ${scores['ingenieria'] || 0}
 - Arte: ${scores['arte'] || 0}
 - Matemáticas: ${scores['matematicas'] || 0}
 
-Ubicación: ${locationInput || 'México'}
+Ubicación del estudiante: ${locationInput || 'México'}
 
-Responde con este JSON exacto:
+Tu tarea es:
+1. Generar una descripción personalizada del perfil 
+   vocacional del estudiante
+2. Sugerir universidades reales de México cercanas a 
+   su ubicación que tengan carreras afines a su perfil STEAM
+
+Responde ÚNICAMENTE con un JSON válido con esta 
+estructura exacta, sin texto adicional, sin markdown:
+
 {
-  "description": "string de 3-4 oraciones del perfil vocacional",
+  "description": "Descripción personalizada del perfil 
+  vocacional en 3-4 oraciones. Menciona sus fortalezas 
+  STEAM dominantes, cómo se relacionan entre sí y qué 
+  tipo de profesional podría llegar a ser. Usa un tono 
+  motivador y cercano dirigido al estudiante.",
   "universities": [
     {
-      "name": "string",
-      "location": "string",
-      "suggestedMajor": "string",
-      "matchReason": "string",
-      "keyDates": "string",
-      "studyPlan": ["string", "string", "string", "string", "string"],
-      "websiteUrl": "string"
+      "name": "Nombre completo de la universidad",
+      "location": "Ciudad, Estado",
+      "suggestedMajor": "Nombre de la carrera sugerida",
+      "matchReason": "Explicación de 2-3 oraciones de por 
+      qué esta carrera hace match con el perfil del 
+      estudiante basándote en sus puntajes STEAM dominantes.",
+      "keyDates": "Convocatoria: Mes Año | Examen: Mes Año 
+      | Inicio: Mes Año",
+      "studyPlan": [
+        "Materia 1", "Materia 2", "Materia 3",
+        "Materia 4", "Materia 5"
+      ],
+      "websiteUrl": "https://sitio-oficial-real.edu.mx"
     }
   ]
 }
 
-Incluye exactamente 5 universidades reales de México ordenadas 
-por cercanía a la ubicación.`,
+Reglas importantes:
+- Incluye exactamente 5 universidades reales de México
+- Ordénalas por cercanía a la ubicación del estudiante
+- Cada carrera debe estar relacionada con las áreas STEAM 
+  donde el estudiante obtuvo mayor puntaje
+- studyPlan debe tener entre 4 y 6 materias representativas
+- keyDates debe tener fechas aproximadas realistas 2025-2026
+- websiteUrl debe ser el sitio oficial real
+- El JSON debe ser válido y parseable sin modificaciones`,
         },
       ],
       temperature: 0.7,
