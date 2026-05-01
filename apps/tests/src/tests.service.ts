@@ -92,7 +92,6 @@ export class TestsService {
       testId: test.id,
       scores,
       dominantTraits,
-      primaryCareer: aiResponse.primaryCareer,
       aiProfileDescription: aiResponse.description,
       recommendations: aiResponse.universities,
     };
