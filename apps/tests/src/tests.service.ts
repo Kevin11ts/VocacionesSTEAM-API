@@ -121,10 +121,15 @@ export class TestsService {
 
   private getDominantTraits(scores: Record<string, number>): string {
     const entries = Object.entries(scores).sort((a, b) => b[1] - a[1]);
-    const top1 = entries[0][0];
-    const top2 = entries[1][0];
+    const top1 = entries[0];
+    const top2 = entries[1];
     
     const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
-    return `${cap(top1)} + ${cap(top2)}`;
+    
+    if (top2[1] === 0) {
+      return cap(top1[0]); // Si el segundo puntaje es 0, solo retorna el primero
+    }
+    
+    return `${cap(top1[0])} + ${cap(top2[0])}`;
   }
 }
