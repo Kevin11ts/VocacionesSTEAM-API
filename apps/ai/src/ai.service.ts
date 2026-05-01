@@ -123,67 +123,59 @@ Reglas importantes:
         {
           role: 'system',
           content:
-            'Eres un orientador vocacional experto en áreas STEAM ' +
-            '(Ciencia, Tecnología, Ingeniería, Arte y Matemáticas) ' +
-            'con amplio conocimiento de universidades en México. ' +
-            'Responde ÚNICAMENTE con JSON válido, sin markdown ' +
-            'ni texto adicional.',
+            'Eres un orientador vocacional y experto universitario de alto nivel especializado en áreas STEAM ' +
+            '(Ciencia, Tecnología, Ingeniería, Arte y Matemáticas) en México. ' +
+            'Tu objetivo es analizar profundamente los puntajes de un estudiante, definir su identidad profesional ' +
+            'y conectarlo con las mejores opciones educativas reales en México, categorizadas por distancia. ' +
+            'Responde ÚNICAMENTE con JSON válido, sin markdown ni texto adicional.',
         },
         {
           role: 'user',
-          content: `Un estudiante completó un test vocacional con los 
-siguientes puntajes:
+          content: `Un estudiante completó un test vocacional de 20 preguntas con los siguientes puntajes (máximo 20 en total):
 - Ciencia: ${scores['ciencia'] || 0}
 - Tecnología: ${scores['tecnologia'] || 0}
 - Ingeniería: ${scores['ingenieria'] || 0}
 - Arte: ${scores['arte'] || 0}
 - Matemáticas: ${scores['matematicas'] || 0}
 
-Ubicación del estudiante: ${locationInput || 'México'}
+Ubicación del estudiante (Ciudad/Estado o C.P.): ${locationInput || 'México'}
 
 Tu tarea es:
-1. Generar una descripción personalizada del perfil 
-   vocacional del estudiante
-2. Sugerir universidades reales de México cercanas a 
-   su ubicación que tengan carreras afines a su perfil STEAM
+1. Analizar los puntajes para generar un perfil vocacional profesional.
+2. Identificar la "Carrera Principal Recomendada" que mejor se adapte a su combinación de puntajes más altos.
+3. Sugerir 5 universidades reales de México que ofrezcan carreras afines.
+4. Clasificar estas universidades por distancia desde la ubicación del estudiante en tres categorías:
+   - "Cerca": En la misma ciudad o a menos de 50 km.
+   - "Media distancia": En el mismo estado o estado vecino (50 km - 200 km).
+   - "Lejos": En otro estado de México (más de 200 km).
 
-Responde ÚNICAMENTE con un JSON válido con esta 
-estructura exacta, sin texto adicional, sin markdown:
+Responde ÚNICAMENTE con un JSON válido con esta estructura exacta:
 
 {
-  "description": "Descripción personalizada del perfil 
-  vocacional en 3-4 oraciones. Menciona sus fortalezas 
-  STEAM dominantes, cómo se relacionan entre sí y qué 
-  tipo de profesional podría llegar a ser. Usa un tono 
-  motivador y cercano dirigido al estudiante.",
+  "primaryCareer": "Nombre de la carrera universitaria ideal (ej. Ingeniería Mecatrónica, Biotecnología, Diseño Digital)",
+  "description": "Descripción profesional del perfil vocacional en 4-5 oraciones. Analiza la combinación de sus puntajes más altos, explica su estilo de pensamiento y resolución de problemas, y describe el tipo de impacto profesional que podría lograr. Mantén un tono inspirador y experto.",
   "universities": [
     {
-      "name": "Nombre completo de la universidad",
+      "name": "Nombre oficial completo de la universidad",
       "location": "Ciudad, Estado",
+      "distanceCategory": "Cerca" | "Media distancia" | "Lejos",
       "suggestedMajor": "Nombre de la carrera sugerida",
-      "matchReason": "Explicación de 2-3 oraciones de por 
-      qué esta carrera hace match con el perfil del 
-      estudiante basándote en sus puntajes STEAM dominantes.",
-      "keyDates": "Convocatoria: Mes Año | Examen: Mes Año 
-      | Inicio: Mes Año",
+      "matchReason": "Explicación de 2-3 oraciones de por qué esta universidad y carrera hacen un excelente match con el perfil STEAM del estudiante.",
+      "keyDates": "Convocatoria: Mes Año | Examen: Mes Año | Inicio: Mes Año",
       "studyPlan": [
-        "Materia 1", "Materia 2", "Materia 3",
-        "Materia 4", "Materia 5"
+        "Materia representativa 1", "Materia representativa 2", "Materia representativa 3",
+        "Materia representativa 4", "Materia representativa 5"
       ],
       "websiteUrl": "https://sitio-oficial-real.edu.mx"
     }
   ]
 }
 
-Reglas importantes:
-- Incluye exactamente 5 universidades reales de México
-- Ordénalas por cercanía a la ubicación del estudiante
-- Cada carrera debe estar relacionada con las áreas STEAM 
-  donde el estudiante obtuvo mayor puntaje
-- studyPlan debe tener entre 4 y 6 materias representativas
-- keyDates debe tener fechas aproximadas realistas 2025-2026
-- websiteUrl debe ser el sitio oficial real
-- El JSON debe ser válido y parseable sin modificaciones`,
+Reglas críticas:
+- Incluye exactamente 5 universidades reales de México.
+- Intenta incluir opciones en las tres categorías de distancia ("Cerca", "Media distancia", "Lejos") basándote en la ubicación: ${locationInput || 'México'}. Si no hay ubicación específica, asume opciones nacionales variadas.
+- Cada "suggestedMajor" debe estar muy alineada con la "primaryCareer" o las áreas STEAM dominantes.
+- El JSON debe ser 100% válido y parseable.`,
         },
       ],
       temperature: 0.7,
