@@ -175,6 +175,7 @@ Reglas críticas:
     });
 
     const content = completion.choices[0]?.message?.content || '{}';
-    return JSON.parse(content);
+    const cleanedContent = content.replace(/```json|```/g, '').trim();
+    return JSON.parse(cleanedContent);
   }
 }
