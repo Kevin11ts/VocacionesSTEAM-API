@@ -1,4 +1,4 @@
-import { Controller, Post, Get, Body, Inject, UseGuards, Put, Param, Delete } from '@nestjs/common';
+import { Controller, Post, Get, Body, Inject, UseGuards, Put, Param, Delete, Patch } from '@nestjs/common';
 import { IsObject, IsOptional, IsString } from 'class-validator';
 import { ClientProxy } from '@nestjs/microservices';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiBody, ApiProperty, ApiParam } from '@nestjs/swagger';
@@ -16,6 +16,12 @@ class SubmitTestDto {
   @IsOptional()
   @IsString()
   locationInput?: string;
+}
+
+class UpdateTestNameDto {
+  @ApiProperty({ example: 'Test Vocacional 2' })
+  @IsString()
+  testName: string;
 }
 
 @ApiTags('tests')
@@ -81,6 +87,46 @@ export class TestsGatewayController {
         answers: body.answers, 
         locationInput: body.locationInput 
       })
+    );
+  }
+
+  @Get('history')
+  @ApiOperation({ summary: 'Get history of vocational tests for current user' })
+  @ApiResponse({ status: 200, description: 'List of previous test results' })
+  async getTestHistory(@CurrentUser() user: any) {
+    return lastValueFrom(
+      this.testsClient.send({ cmd: 'tests.get-history' }, { userId: user.id })
+    );
+  }
+
+  @Get('history/:id')
+  @ApiOperation({ summary: 'Get details of a specific test from history' })
+  @ApiResponse({ status: 200, description: 'Full test details and recommendations' })
+  @ApiParam({ name: 'id', description: 'Test UUID' })
+  async getTestById(@Param('id') id: string, @CurrentUser() user: any) {
+    return lastValueFrom(
+      this.testsClient.send({ cmd: 'tests.get-by-id' }, { id, userId: user.id })
+    );
+  }
+
+  @Patch('history/:id')
+  @ApiOperation({ summary: 'Update the name of a test in history' })
+  @ApiResponse({ status: 200, description: 'Test name updated' })
+  @ApiParam({ name: 'id', description: 'Test UUID' })
+  @ApiBody({ type: UpdateTestNameDto })
+  async updateTestName(@Param('id') id: string, @CurrentUser() user: any, @Body() body: UpdateTestNameDto) {
+    return lastValueFrom(
+      this.testsClient.send({ cmd: 'tests.update-name' }, { id, userId: user.id, testName: body.testName })
+    );
+  }
+
+  @Delete('history/:id')
+  @ApiOperation({ summary: 'Delete a test from history' })
+  @ApiResponse({ status: 200, description: 'Test deleted' })
+  @ApiParam({ name: 'id', description: 'Test UUID' })
+  async deleteTestFromHistory(@Param('id') id: string, @CurrentUser() user: any) {
+    return lastValueFrom(
+      this.testsClient.send({ cmd: 'tests.delete-test' }, { id, userId: user.id })
     );
   }
 }

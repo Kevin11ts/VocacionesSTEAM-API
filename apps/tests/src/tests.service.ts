@@ -61,8 +61,12 @@ export class TestsService {
     const scores = this.calculateScores(answers);
     const dominantTraits = this.getDominantTraits(scores);
 
+    const testCount = await this.testsRepository.count({ where: { user: { id: userId } } });
+    const testName = `Test Vocacional ${testCount + 1}`;
+
     let test = this.testsRepository.create({
       user,
+      testName,
       answers,
       profileScores: scores,
       dominantTraits,
@@ -95,6 +99,52 @@ export class TestsService {
       aiProfileDescription: aiResponse.description,
       recommendations: aiResponse.universities,
     };
+  }
+
+  async getTestHistory(userId: string) {
+    const tests = await this.testsRepository.find({
+      where: { user: { id: userId } },
+      order: { completedAt: 'DESC' },
+      select: ['id', 'testName', 'completedAt', 'dominantTraits', 'profileScores']
+    });
+    return tests;
+  }
+
+  async getTestById(id: string, userId: string) {
+    const test = await this.testsRepository.findOne({
+      where: { id, user: { id: userId } },
+      relations: ['recommendation'],
+    });
+
+    if (!test) throw new RpcException('Test not found');
+
+    return {
+      testId: test.id,
+      testName: test.testName,
+      completedAt: test.completedAt,
+      scores: test.profileScores,
+      dominantTraits: test.dominantTraits,
+      answers: test.answers,
+      aiProfileDescription: test.recommendation?.aiGeneralAdvice,
+      recommendations: test.recommendation?.universities,
+    };
+  }
+
+  async updateTestName(id: string, userId: string, testName: string) {
+    const test = await this.testsRepository.findOne({ where: { id, user: { id: userId } } });
+    if (!test) throw new RpcException('Test not found');
+
+    test.testName = testName;
+    await this.testsRepository.save(test);
+    return { success: true, message: 'Test name updated', testName: test.testName };
+  }
+
+  async deleteTestFromHistory(id: string, userId: string) {
+    const test = await this.testsRepository.findOne({ where: { id, user: { id: userId } } });
+    if (!test) throw new RpcException('Test not found');
+
+    await this.testsRepository.remove(test);
+    return { success: true, message: 'Test deleted' };
   }
 
   private calculateScores(answers: Record<string, string>): Record<string, number> {

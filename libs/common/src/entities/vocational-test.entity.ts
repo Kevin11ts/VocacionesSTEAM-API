@@ -10,6 +10,9 @@ export class VocationalTest {
   @ManyToOne(() => User, user => user.tests)
   user: User;
 
+  @Column({ nullable: true })
+  testName: string;
+
   @Column({ type: 'jsonb' })
   answers: Record<string, string>;
 

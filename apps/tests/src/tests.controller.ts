@@ -42,4 +42,24 @@ export class TestsController {
   ) {
     return this.testsService.submitTest(payload.userId, payload.answers, payload.locationInput);
   }
+
+  @MessagePattern({ cmd: 'tests.get-history' })
+  async getTestHistory(@Payload() payload: { userId: string }) {
+    return this.testsService.getTestHistory(payload.userId);
+  }
+
+  @MessagePattern({ cmd: 'tests.get-by-id' })
+  async getTestById(@Payload() payload: { id: string, userId: string }) {
+    return this.testsService.getTestById(payload.id, payload.userId);
+  }
+
+  @MessagePattern({ cmd: 'tests.update-name' })
+  async updateTestName(@Payload() payload: { id: string, userId: string, testName: string }) {
+    return this.testsService.updateTestName(payload.id, payload.userId, payload.testName);
+  }
+
+  @MessagePattern({ cmd: 'tests.delete-test' })
+  async deleteTestFromHistory(@Payload() payload: { id: string, userId: string }) {
+    return this.testsService.deleteTestFromHistory(payload.id, payload.userId);
+  }
 }
