@@ -90,6 +90,15 @@ export class TestsGatewayController {
     );
   }
 
+  @Get('latest')
+  @ApiOperation({ summary: 'Get the latest vocational test for the current user' })
+  @ApiResponse({ status: 200, description: 'Latest test details and recommendations, or null if no tests exist' })
+  async getLatestTest(@CurrentUser() user: any) {
+    return lastValueFrom(
+      this.testsClient.send({ cmd: 'tests.get-latest' }, { userId: user.id })
+    );
+  }
+
   @Get('history')
   @ApiOperation({ summary: 'Get history of vocational tests for current user' })
   @ApiResponse({ status: 200, description: 'List of previous test results' })

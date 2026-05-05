@@ -110,6 +110,27 @@ export class TestsService {
     return tests;
   }
 
+  async getLatestTest(userId: string) {
+    const test = await this.testsRepository.findOne({
+      where: { user: { id: userId } },
+      order: { completedAt: 'DESC' },
+      relations: ['recommendation'],
+    });
+
+    if (!test) return null;
+
+    return {
+      testId: test.id,
+      testName: test.testName,
+      completedAt: test.completedAt,
+      scores: test.profileScores,
+      dominantTraits: test.dominantTraits,
+      answers: test.answers,
+      aiProfileDescription: test.recommendation?.aiGeneralAdvice,
+      recommendations: test.recommendation?.universities,
+    };
+  }
+
   async getTestById(id: string, userId: string) {
     const test = await this.testsRepository.findOne({
       where: { id, user: { id: userId } },

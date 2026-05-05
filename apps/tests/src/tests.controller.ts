@@ -48,6 +48,11 @@ export class TestsController {
     return this.testsService.getTestHistory(payload.userId);
   }
 
+  @MessagePattern({ cmd: 'tests.get-latest' })
+  async getLatestTest(@Payload() payload: { userId: string }) {
+    return this.testsService.getLatestTest(payload.userId);
+  }
+
   @MessagePattern({ cmd: 'tests.get-by-id' })
   async getTestById(@Payload() payload: { id: string, userId: string }) {
     return this.testsService.getTestById(payload.id, payload.userId);
