@@ -7,6 +7,7 @@ export * from './entities/question.entity';
 export * from './entities/option.entity';
 export * from './entities/saved-university.entity';
 export * from './entities/saved-course.entity';
+export * from './entities/ai-log.entity';
 export * from './database/database.module';
 export * from './config/config.module';
 

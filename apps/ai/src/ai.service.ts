@@ -2,6 +2,9 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import Groq from 'groq-sdk';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { AiLog } from '@app/common';
 
 @Injectable()
 export class AiService {
@@ -10,7 +13,10 @@ export class AiService {
   private geminiUnis: GoogleGenerativeAI;
   private groq: Groq;
 
-  constructor(private configService: ConfigService) {
+  constructor(
+    private configService: ConfigService,
+    @InjectRepository(AiLog) private readonly aiLogRepository: Repository<AiLog>,
+  ) {
     // TODO: Descomentar cuando se configure billing en Google Cloud
     // this.geminiTests = new GoogleGenerativeAI(
     //   this.configService.get<string>('GEMINI_API_KEY_TESTS') || '',
@@ -106,16 +112,26 @@ Reglas importantes:
   async generateRecommendations(
     locationInput: string,
     scores: Record<string, number>,
+    studentName: string,
+    dominantTraits: string,
   ): Promise<{ description: string; universities: any[] }> {
     this.logger.log('Generando recomendaciones con Groq...');
-    return this.generateRecommendationsFallback(locationInput, scores);
+    return this.generateRecommendationsFallback(locationInput, scores, studentName, dominantTraits);
   }
 
   private async generateRecommendationsFallback(
     locationInput: string,
     scores: Record<string, number>,
+    studentName: string,
+    dominantTraits: string,
   ): Promise<{ description: string; universities: any[] }> {
     this.logger.log('Usando fallback Groq para recomendaciones...');
+    const startTime = Date.now();
+    let success = true;
+    let errorMessage = '';
+    let tokensConsumed = 0;
+
+    try {
 
     const completion = await this.groq.chat.completions.create({
       model: 'llama-3.3-70b-versatile',
@@ -174,8 +190,90 @@ Reglas críticas:
       max_tokens: 3000,
     });
 
-    const content = completion.choices[0]?.message?.content || '{}';
-    const cleanedContent = content.replace(/```json|```/g, '').trim();
-    return JSON.parse(cleanedContent);
+      tokensConsumed = completion.usage?.total_tokens || 0;
+      const content = completion.choices[0]?.message?.content || '{}';
+      const cleanedContent = content.replace(/```json|```/g, '').trim();
+      const result = JSON.parse(cleanedContent);
+
+      await this.saveLog(studentName, dominantTraits, Date.now() - startTime, success, errorMessage, tokensConsumed, 'Groq');
+      return result;
+    } catch (error) {
+      success = false;
+      errorMessage = error.message;
+      await this.saveLog(studentName, dominantTraits, Date.now() - startTime, success, errorMessage, tokensConsumed, 'Groq');
+      throw error;
+    }
+  }
+
+  private async saveLog(
+    studentName: string,
+    detectedProfile: string,
+    latency: number,
+    success: boolean,
+    errorMessage: string,
+    tokensConsumed: number,
+    provider: string,
+  ) {
+    try {
+      const log = this.aiLogRepository.create({
+        studentName,
+        detectedProfile,
+        latency,
+        success,
+        errorMessage,
+        tokensConsumed,
+        provider,
+      });
+      await this.aiLogRepository.save(log);
+    } catch (err) {
+      this.logger.error('Error saving AI log', err);
+    }
+  }
+
+  async getLogsStats() {
+    const totalLogs = await this.aiLogRepository.count();
+    if (totalLogs === 0) {
+      return {
+        successRate: '0%',
+        averageLatency: '0ms',
+        totalTokens: '0',
+        recentLogs: [],
+      };
+    }
+
+    const successfulLogs = await this.aiLogRepository.count({ where: { success: true } });
+    const successRate = ((successfulLogs / totalLogs) * 100).toFixed(1) + '%';
+
+    const { avgLatency, sumTokens } = await this.aiLogRepository
+      .createQueryBuilder('log')
+      .select('AVG(log.latency)', 'avgLatency')
+      .addSelect('SUM(log.tokensConsumed)', 'sumTokens')
+      .getRawOne();
+
+    const recentLogs = await this.aiLogRepository.find({
+      order: { createdAt: 'DESC' },
+      take: 10,
+    });
+
+    const formatTokens = (tokens: number) => {
+      if (!tokens) return '0';
+      if (tokens >= 1000000) return (tokens / 1000000).toFixed(1) + 'M';
+      if (tokens >= 1000) return (tokens / 1000).toFixed(1) + 'k';
+      return tokens.toString();
+    };
+
+    return {
+      successRate,
+      averageLatency: `${Math.round(avgLatency || 0)}ms`,
+      totalTokens: formatTokens(sumTokens),
+      recentLogs: recentLogs.map(log => ({
+        id: log.id,
+        date: log.createdAt,
+        studentName: log.studentName,
+        detectedProfile: log.detectedProfile,
+        latency: `${Math.round(log.latency)}ms`,
+        status: log.success ? 'Éxito' : 'Error',
+      })),
+    };
   }
 }

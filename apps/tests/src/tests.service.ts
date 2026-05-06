@@ -77,7 +77,12 @@ export class TestsService {
     try {
       this.logger.log(`Calling AI Service for Test ${test.id}`);
       aiResponse = await lastValueFrom(
-        this.aiClient.send({ cmd: 'ai.generate-recommendations' }, { locationInput, scores })
+        this.aiClient.send({ cmd: 'ai.generate-recommendations' }, { 
+          locationInput, 
+          scores,
+          studentName: user.fullname,
+          dominantTraits
+        })
       );
     } catch (error) {
       this.logger.error('Failed to get AI recommendations', error);
