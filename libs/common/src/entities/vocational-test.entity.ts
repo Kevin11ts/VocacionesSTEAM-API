@@ -7,7 +7,7 @@ export class VocationalTest {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @ManyToOne(() => User, user => user.tests)
+  @ManyToOne(() => User, user => user.tests, { onDelete: 'CASCADE' })
   user: User;
 
   @Column({ nullable: true })

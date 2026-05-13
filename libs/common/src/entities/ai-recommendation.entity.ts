@@ -6,7 +6,7 @@ export class AiRecommendation {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @OneToOne(() => VocationalTest, test => test.recommendation)
+  @OneToOne(() => VocationalTest, test => test.recommendation, { onDelete: 'CASCADE' })
   @JoinColumn()
   test: VocationalTest;
 

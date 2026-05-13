@@ -6,7 +6,7 @@ export class UserSettings {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @OneToOne(() => User, user => user.settings)
+  @OneToOne(() => User, user => user.settings, { onDelete: 'CASCADE' })
   @JoinColumn()
   user: User;
 

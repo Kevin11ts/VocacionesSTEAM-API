@@ -28,6 +28,8 @@ describe('AiController', () => {
       const payload = {
         locationInput: 'Ciudad de México',
         scores: { math: 90, science: 85 },
+        studentName: 'John Doe',
+        dominantTraits: 'Creative, Logical',
       };
 
       const expectedResult = { recommendations: ['Engineering', 'Physics'] };
@@ -38,6 +40,8 @@ describe('AiController', () => {
       expect(aiService.generateRecommendations).toHaveBeenCalledWith(
         payload.locationInput,
         payload.scores,
+        payload.studentName,
+        payload.dominantTraits,
       );
       expect(result).toEqual(expectedResult);
     });
