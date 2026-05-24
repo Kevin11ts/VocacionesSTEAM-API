@@ -36,9 +36,9 @@ export class AiService {
   ): Promise<{ description: string; universities: any[] }> {
     const startTime = Date.now();
     try {
-      this.logger.log('Generando recomendaciones con Gemini 2.0 Flash...');
+      this.logger.log('Generando recomendaciones con Gemini 1.5 Flash...');
       const model = this.geminiTests.getGenerativeModel({
-        model: 'gemini-2.0-flash',
+        model: 'gemini-1.5-flash',
         generationConfig: { responseMimeType: 'application/json' },
       });
 
@@ -99,6 +99,9 @@ Reglas importantes:
       const result = await model.generateContent(prompt);
       const responseText = result.response.text();
       const parsedResult = JSON.parse(responseText);
+      if (!parsedResult.universities) {
+        parsedResult.universities = [];
+      }
 
       const tokensConsumed = result.response.usageMetadata?.totalTokenCount || 0;
       await this.saveLog(studentName, dominantTraits, Date.now() - startTime, true, '', tokensConsumed, 'Gemini');
@@ -188,6 +191,9 @@ Reglas críticas:
       const content = completion.choices[0]?.message?.content || '{}';
       const cleanedContent = content.replace(/```json|```/g, '').trim();
       const result = JSON.parse(cleanedContent);
+      if (!result.universities) {
+        result.universities = [];
+      }
 
       await this.saveLog(studentName, dominantTraits, Date.now() - startTime, success, errorMessage, tokensConsumed, 'Groq');
       return result;
