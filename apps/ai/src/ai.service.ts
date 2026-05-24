@@ -17,28 +17,28 @@ export class AiService {
     private configService: ConfigService,
     @InjectRepository(AiLog) private readonly aiLogRepository: Repository<AiLog>,
   ) {
-    // TODO: Descomentar cuando se configure billing en Google Cloud
-    // this.geminiTests = new GoogleGenerativeAI(
-    //   this.configService.get<string>('GEMINI_API_KEY_TESTS') || '',
-    // );
-    // this.geminiUnis = new GoogleGenerativeAI(
-    //   this.configService.get<string>('GEMINI_API_KEY_UNIS') || '',
-    // );
+    this.geminiTests = new GoogleGenerativeAI(
+      this.configService.get<string>('GEMINI_API_KEY_TESTS') || '',
+    );
+    this.geminiUnis = new GoogleGenerativeAI(
+      this.configService.get<string>('GEMINI_API_KEY_UNIS') || '',
+    );
     this.groq = new Groq({
       apiKey: this.configService.get<string>('GROQ_API_KEY') || '',
     });
   }
 
-  // TODO: Descomentar cuando se configure billing en Google Cloud
-  /*
   async generateRecommendations(
     locationInput: string,
     scores: Record<string, number>,
+    studentName: string,
+    dominantTraits: string,
   ): Promise<{ description: string; universities: any[] }> {
+    const startTime = Date.now();
     try {
-      this.logger.log('Generando recomendaciones con Gemini 1.5 Flash...');
+      this.logger.log('Generando recomendaciones con Gemini 2.0 Flash...');
       const model = this.geminiTests.getGenerativeModel({
-        model: 'gemini-1.5-flash',
+        model: 'gemini-2.0-flash',
         generationConfig: { responseMimeType: 'application/json' },
       });
 
@@ -94,29 +94,23 @@ Reglas importantes:
 - keyDates debe tener fechas aproximadas realistas para 2025-2026
 - websiteUrl debe ser el sitio oficial real de la universidad
 - El JSON debe ser válido y parseable sin modificaciones
-\`;
+`;
 
       const result = await model.generateContent(prompt);
       const responseText = result.response.text();
-      return JSON.parse(responseText);
+      const parsedResult = JSON.parse(responseText);
+
+      const tokensConsumed = result.response.usageMetadata?.totalTokenCount || 0;
+      await this.saveLog(studentName, dominantTraits, Date.now() - startTime, true, '', tokensConsumed, 'Gemini');
+
+      return parsedResult;
 
     } catch (error) {
       this.logger.error(
         'Error con Gemini Tests, usando fallback Groq...', error
       );
-      return this.generateRecommendationsFallback(locationInput, scores);
+      return this.generateRecommendationsFallback(locationInput, scores, studentName, dominantTraits);
     }
-  }
-  */
-
-  async generateRecommendations(
-    locationInput: string,
-    scores: Record<string, number>,
-    studentName: string,
-    dominantTraits: string,
-  ): Promise<{ description: string; universities: any[] }> {
-    this.logger.log('Generando recomendaciones con Groq...');
-    return this.generateRecommendationsFallback(locationInput, scores, studentName, dominantTraits);
   }
 
   private async generateRecommendationsFallback(
