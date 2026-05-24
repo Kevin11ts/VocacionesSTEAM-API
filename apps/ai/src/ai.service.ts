@@ -36,9 +36,9 @@ export class AiService {
   ): Promise<{ description: string; universities: any[] }> {
     const startTime = Date.now();
     try {
-      this.logger.log('Generando recomendaciones con Gemini 1.5 Flash...');
+      this.logger.log('Generando recomendaciones con Gemini 2.0 Flash Lite...');
       const model = this.geminiTests.getGenerativeModel({
-        model: 'gemini-1.5-flash',
+        model: 'gemini-2.0-flash-lite',
         generationConfig: { responseMimeType: 'application/json' },
       });
 
