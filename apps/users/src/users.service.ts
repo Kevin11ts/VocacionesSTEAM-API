@@ -1,16 +1,26 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { User, UserSettings, VocationalTest, AiRecommendation, SavedUniversity, SavedCourse } from '@app/common';
+import {
+  User,
+  UserSettings,
+  VocationalTest,
+  AiRecommendation,
+  SavedUniversity,
+  SavedCourse,
+} from '@app/common';
 import { RpcException } from '@nestjs/microservices';
 
 @Injectable()
 export class UsersService {
   constructor(
     @InjectRepository(User) private readonly userRepository: Repository<User>,
-    @InjectRepository(UserSettings) private readonly settingsRepository: Repository<UserSettings>,
-    @InjectRepository(SavedUniversity) private readonly savedUniversityRepository: Repository<SavedUniversity>,
-    @InjectRepository(SavedCourse) private readonly savedCourseRepository: Repository<SavedCourse>
+    @InjectRepository(UserSettings)
+    private readonly settingsRepository: Repository<UserSettings>,
+    @InjectRepository(SavedUniversity)
+    private readonly savedUniversityRepository: Repository<SavedUniversity>,
+    @InjectRepository(SavedCourse)
+    private readonly savedCourseRepository: Repository<SavedCourse>,
   ) {}
 
   async getProfile(userId: string) {
@@ -22,8 +32,10 @@ export class UsersService {
     if (!user) throw new RpcException('User not found');
 
     // Retornamos el usuario con su test más reciente si está disponible
-    const latestTest = user.tests?.sort((a, b) => b.completedAt.getTime() - a.completedAt.getTime())[0];
-    
+    const latestTest = user.tests?.sort(
+      (a, b) => b.completedAt.getTime() - a.completedAt.getTime(),
+    )[0];
+
     // Omitimos la contraseña
     const { password, ...safeUser } = user;
     return { ...safeUser, latestTest };
@@ -49,7 +61,7 @@ export class UsersService {
   async update(id: string, updateData: Partial<User>) {
     const user = await this.userRepository.findOne({ where: { id } });
     if (!user) throw new RpcException('Usuario no encontrado');
-    
+
     // Ignorar actualización de password directa por seguridad.
     if (updateData.password) {
       delete updateData.password;
@@ -79,7 +91,7 @@ export class UsersService {
   async updateSettings(userId: string, settingsDto: Partial<UserSettings>) {
     const user = await this.userRepository.findOne({
       where: { id: userId },
-      relations: ['settings']
+      relations: ['settings'],
     });
     if (!user) throw new RpcException('User not found');
 

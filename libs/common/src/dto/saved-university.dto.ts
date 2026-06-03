@@ -10,22 +10,35 @@ export class CreateSavedUniversityDto {
   @IsString()
   universityName: string;
 
-  @ApiProperty({ example: 'Av. Universidad 123, Ciudad de México', required: false })
+  @ApiProperty({
+    example: 'Av. Universidad 123, Ciudad de México',
+    required: false,
+  })
   @IsString()
   @IsOptional()
   location?: string;
 
-  @ApiProperty({ example: 'Esta carrera concuerda fuertemente con tus habilidades analíticas.', required: false })
+  @ApiProperty({
+    example:
+      'Esta carrera concuerda fuertemente con tus habilidades analíticas.',
+    required: false,
+  })
   @IsString()
   @IsOptional()
   relationshipExplanation?: string;
 
-  @ApiProperty({ example: 'Inscripciones abiertas del 1 al 15 de agosto.', required: false })
+  @ApiProperty({
+    example: 'Inscripciones abiertas del 1 al 15 de agosto.',
+    required: false,
+  })
   @IsString()
   @IsOptional()
   keyDates?: string;
 
-  @ApiProperty({ example: '1er Semestre: Matemáticas, Programación...', required: false })
+  @ApiProperty({
+    example: '1er Semestre: Matemáticas, Programación...',
+    required: false,
+  })
   @IsString()
   @IsOptional()
   studyPlan?: string;

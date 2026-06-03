@@ -1,4 +1,9 @@
-import { Catch, ArgumentsHost, HttpStatus, HttpException } from '@nestjs/common';
+import {
+  Catch,
+  ArgumentsHost,
+  HttpStatus,
+  HttpException,
+} from '@nestjs/common';
 import { BaseRpcExceptionFilter, RpcException } from '@nestjs/microservices';
 import { Observable, throwError } from 'rxjs';
 import { Response } from 'express';
@@ -15,7 +20,10 @@ export class RpcToHttpExceptionFilter {
 
     if (exception instanceof RpcException) {
       const rpcError = exception.getError();
-      message = typeof rpcError === 'string' ? rpcError : (rpcError as any)?.message ?? message;
+      message =
+        typeof rpcError === 'string'
+          ? rpcError
+          : ((rpcError as any)?.message ?? message);
     } else if (exception instanceof HttpException) {
       const httpRes = exception.getResponse() as any;
       statusCode = exception.getStatus();
@@ -46,7 +54,10 @@ export class RpcToHttpExceptionFilter {
 
     // Mapeo dinámico para mensajes con variables
     if (!statusCode) {
-      if (message.includes('bloqueada') || message.includes('Demasiados intentos fallidos')) {
+      if (
+        message.includes('bloqueada') ||
+        message.includes('Demasiados intentos fallidos')
+      ) {
         statusCode = HttpStatus.TOO_MANY_REQUESTS;
       } else if (message.includes('Código inválido')) {
         statusCode = HttpStatus.BAD_REQUEST;

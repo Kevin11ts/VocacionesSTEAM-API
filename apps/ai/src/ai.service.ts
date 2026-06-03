@@ -15,8 +15,10 @@ export class AiService {
 
   constructor(
     private configService: ConfigService,
-    @InjectRepository(AiLog) private readonly aiLogRepository: Repository<AiLog>,
-    @InjectRepository(University) private readonly universityRepository: Repository<University>,
+    @InjectRepository(AiLog)
+    private readonly aiLogRepository: Repository<AiLog>,
+    @InjectRepository(University)
+    private readonly universityRepository: Repository<University>,
   ) {
     this.geminiTests = new GoogleGenerativeAI(
       this.configService.get<string>('GEMINI_API_KEY_TESTS') || '',
@@ -104,16 +106,30 @@ Reglas importantes:
         parsedResult.universities = [];
       }
 
-      const tokensConsumed = result.response.usageMetadata?.totalTokenCount || 0;
-      await this.saveLog(studentName, dominantTraits, Date.now() - startTime, true, '', tokensConsumed, 'Gemini');
+      const tokensConsumed =
+        result.response.usageMetadata?.totalTokenCount || 0;
+      await this.saveLog(
+        studentName,
+        dominantTraits,
+        Date.now() - startTime,
+        true,
+        '',
+        tokensConsumed,
+        'Gemini',
+      );
 
       return parsedResult;
-
     } catch (error) {
       this.logger.error(
-        'Error con Gemini Tests, usando fallback Groq...', error
+        'Error con Gemini Tests, usando fallback Groq...',
+        error,
       );
-      return this.generateRecommendationsFallback(locationInput, scores, studentName, dominantTraits);
+      return this.generateRecommendationsFallback(
+        locationInput,
+        scores,
+        studentName,
+        dominantTraits,
+      );
     }
   }
 
@@ -130,21 +146,20 @@ Reglas importantes:
     let tokensConsumed = 0;
 
     try {
-
-    const completion = await this.groq.chat.completions.create({
-      model: 'llama-3.3-70b-versatile',
-      messages: [
-        {
-          role: 'system',
-          content:
-            'Eres un orientador vocacional y experto universitario de alto nivel especializado en áreas STEAM ' +
-            '(Ciencia, Tecnología, Ingeniería, Arte y Matemáticas) en México. ' +
-            'Tu objetivo es analizar los puntajes de un estudiante y conectarlo con excelentes opciones educativas ' +
-            'cercanas a su ubicación. Responde ÚNICAMENTE con JSON válido, sin markdown ni texto adicional.',
-        },
-        {
-          role: 'user',
-          content: `Un estudiante completó un test vocacional de 20 preguntas con los siguientes puntajes:
+      const completion = await this.groq.chat.completions.create({
+        model: 'llama-3.3-70b-versatile',
+        messages: [
+          {
+            role: 'system',
+            content:
+              'Eres un orientador vocacional y experto universitario de alto nivel especializado en áreas STEAM ' +
+              '(Ciencia, Tecnología, Ingeniería, Arte y Matemáticas) en México. ' +
+              'Tu objetivo es analizar los puntajes de un estudiante y conectarlo con excelentes opciones educativas ' +
+              'cercanas a su ubicación. Responde ÚNICAMENTE con JSON válido, sin markdown ni texto adicional.',
+          },
+          {
+            role: 'user',
+            content: `Un estudiante completó un test vocacional de 20 preguntas con los siguientes puntajes:
 - Ciencia: ${scores['ciencia'] || 0}
 - Tecnología: ${scores['tecnologia'] || 0}
 - Ingeniería: ${scores['ingenieria'] || 0}
@@ -182,11 +197,11 @@ Reglas críticas:
 - Asegúrate de que las universidades estén lo más cerca posible de la ubicación: ${locationInput || 'México'}.
 - Las carreras sugeridas deben estar alineadas con las áreas STEAM dominantes.
 - El JSON debe ser 100% válido y parseable.`,
-        },
-      ],
-      temperature: 0.7,
-      max_tokens: 3000,
-    });
+          },
+        ],
+        temperature: 0.7,
+        max_tokens: 3000,
+      });
 
       tokensConsumed = completion.usage?.total_tokens || 0;
       const content = completion.choices[0]?.message?.content || '{}';
@@ -196,12 +211,28 @@ Reglas críticas:
         result.universities = [];
       }
 
-      await this.saveLog(studentName, dominantTraits, Date.now() - startTime, success, errorMessage, tokensConsumed, 'Groq');
+      await this.saveLog(
+        studentName,
+        dominantTraits,
+        Date.now() - startTime,
+        success,
+        errorMessage,
+        tokensConsumed,
+        'Groq',
+      );
       return result;
     } catch (error) {
       success = false;
       errorMessage = error.message;
-      await this.saveLog(studentName, dominantTraits, Date.now() - startTime, success, errorMessage, tokensConsumed, 'Groq');
+      await this.saveLog(
+        studentName,
+        dominantTraits,
+        Date.now() - startTime,
+        success,
+        errorMessage,
+        tokensConsumed,
+        'Groq',
+      );
       throw error;
     }
   }
@@ -242,7 +273,9 @@ Reglas críticas:
       };
     }
 
-    const successfulLogs = await this.aiLogRepository.count({ where: { success: true } });
+    const successfulLogs = await this.aiLogRepository.count({
+      where: { success: true },
+    });
     const successRate = ((successfulLogs / totalLogs) * 100).toFixed(1) + '%';
 
     const { avgLatency, sumTokens } = await this.aiLogRepository
@@ -267,7 +300,7 @@ Reglas críticas:
       successRate,
       averageLatency: `${Math.round(avgLatency || 0)}ms`,
       totalTokens: formatTokens(sumTokens),
-      recentLogs: recentLogs.map(log => ({
+      recentLogs: recentLogs.map((log) => ({
         id: log.id,
         date: log.createdAt,
         studentName: log.studentName,
@@ -288,7 +321,10 @@ Reglas críticas:
     return this.universityRepository.save(university);
   }
 
-  async updateUniversity(id: string, data: Partial<University>): Promise<University | null> {
+  async updateUniversity(
+    id: string,
+    data: Partial<University>,
+  ): Promise<University | null> {
     await this.universityRepository.update(id, data);
     return this.universityRepository.findOne({ where: { id } });
   }

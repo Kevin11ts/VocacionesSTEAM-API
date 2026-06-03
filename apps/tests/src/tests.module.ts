@@ -1,7 +1,24 @@
 import { Module } from '@nestjs/common';
 import { TestsController } from './tests.controller';
 import { TestsService } from './tests.service';
-import { CommonModule, User, VocationalTest, AiRecommendation, Question, Option, UserSettings, OtpCode, SavedUniversity, SavedCourse, Simulator, SimulatorStep, SimulatorOption, ComplementaryTest, UserHistory, CalibrationResult } from '@app/common';
+import {
+  CommonModule,
+  User,
+  VocationalTest,
+  AiRecommendation,
+  Question,
+  Option,
+  UserSettings,
+  OtpCode,
+  SavedUniversity,
+  SavedCourse,
+  Simulator,
+  SimulatorStep,
+  SimulatorOption,
+  ComplementaryTest,
+  UserHistory,
+  CalibrationResult,
+} from '@app/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ClientsModule, Transport } from '@nestjs/microservices';
 import { ConfigService } from '@nestjs/config';
@@ -9,7 +26,23 @@ import { ConfigService } from '@nestjs/config';
 @Module({
   imports: [
     CommonModule,
-    TypeOrmModule.forFeature([User, VocationalTest, AiRecommendation, Question, Option, UserSettings, OtpCode, SavedUniversity, SavedCourse, Simulator, SimulatorStep, SimulatorOption, ComplementaryTest, UserHistory, CalibrationResult]),
+    TypeOrmModule.forFeature([
+      User,
+      VocationalTest,
+      AiRecommendation,
+      Question,
+      Option,
+      UserSettings,
+      OtpCode,
+      SavedUniversity,
+      SavedCourse,
+      Simulator,
+      SimulatorStep,
+      SimulatorOption,
+      ComplementaryTest,
+      UserHistory,
+      CalibrationResult,
+    ]),
     ClientsModule.registerAsync([
       {
         name: 'AI_SERVICE',

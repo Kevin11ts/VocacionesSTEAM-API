@@ -8,8 +8,12 @@ import { RpcToHttpExceptionFilter } from './filters/rpc-exception.filter';
 async function bootstrap() {
   const app = await NestFactory.create(ApiGatewayModule);
   app.setGlobalPrefix('api/v1');
-  const corsOrigins = (process.env.CORS_ORIGIN || '*').split(',').map(o => o.trim());
-  app.enableCors({ origin: corsOrigins.length === 1 ? corsOrigins[0] : corsOrigins });
+  const corsOrigins = (process.env.CORS_ORIGIN || '*')
+    .split(',')
+    .map((o) => o.trim());
+  app.enableCors({
+    origin: corsOrigins.length === 1 ? corsOrigins[0] : corsOrigins,
+  });
 
   app.useGlobalFilters(new RpcToHttpExceptionFilter());
 
@@ -22,7 +26,9 @@ async function bootstrap() {
 
   const config = new DocumentBuilder()
     .setTitle('STEAM Vocations API')
-    .setDescription('El Gateway API Blueprint Maestro para la PWA de Vocaciones STEAM')
+    .setDescription(
+      'El Gateway API Blueprint Maestro para la PWA de Vocaciones STEAM',
+    )
     .setVersion('1.0')
     .addBearerAuth()
     .build();
@@ -35,6 +41,8 @@ async function bootstrap() {
 
   await app.listen(port);
   console.log(`API Gateway ejecutándose en: http://localhost:${port}/api/v1`);
-  console.log(`Documentación de Swagger disponible en: http://localhost:${port}/api`);
+  console.log(
+    `Documentación de Swagger disponible en: http://localhost:${port}/api`,
+  );
 }
 bootstrap();

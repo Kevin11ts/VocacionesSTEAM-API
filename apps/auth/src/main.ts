@@ -6,7 +6,7 @@ import { ConfigService } from '@nestjs/config';
 async function bootstrap() {
   const app = await NestFactory.create(AuthModule);
   const configService = app.get(ConfigService);
-  
+
   const port = configService.get<number>('PORT_AUTH', 3001);
 
   app.connectMicroservice<MicroserviceOptions>({

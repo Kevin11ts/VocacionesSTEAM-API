@@ -23,7 +23,7 @@ export class TestsController {
   }
 
   @MessagePattern({ cmd: 'tests.update-question' })
-  async updateQuestion(@Payload() payload: { id: string, data: any }) {
+  async updateQuestion(@Payload() payload: { id: string; data: any }) {
     return this.testsService.updateQuestion(payload.id, payload.data);
   }
 
@@ -34,13 +34,18 @@ export class TestsController {
 
   @MessagePattern({ cmd: 'tests.submit' })
   async submitTest(
-    @Payload() payload: { 
+    @Payload()
+    payload: {
       userId: string;
       answers: Record<string, string>;
-      locationInput?: string; 
-    }
+      locationInput?: string;
+    },
   ) {
-    return this.testsService.submitTest(payload.userId, payload.answers, payload.locationInput);
+    return this.testsService.submitTest(
+      payload.userId,
+      payload.answers,
+      payload.locationInput,
+    );
   }
 
   @MessagePattern({ cmd: 'tests.get-history' })
@@ -54,17 +59,25 @@ export class TestsController {
   }
 
   @MessagePattern({ cmd: 'tests.get-by-id' })
-  async getTestById(@Payload() payload: { id: string, userId: string }) {
+  async getTestById(@Payload() payload: { id: string; userId: string }) {
     return this.testsService.getTestById(payload.id, payload.userId);
   }
 
   @MessagePattern({ cmd: 'tests.update-name' })
-  async updateTestName(@Payload() payload: { id: string, userId: string, testName: string }) {
-    return this.testsService.updateTestName(payload.id, payload.userId, payload.testName);
+  async updateTestName(
+    @Payload() payload: { id: string; userId: string; testName: string },
+  ) {
+    return this.testsService.updateTestName(
+      payload.id,
+      payload.userId,
+      payload.testName,
+    );
   }
 
   @MessagePattern({ cmd: 'tests.delete-test' })
-  async deleteTestFromHistory(@Payload() payload: { id: string, userId: string }) {
+  async deleteTestFromHistory(
+    @Payload() payload: { id: string; userId: string },
+  ) {
     return this.testsService.deleteTestFromHistory(payload.id, payload.userId);
   }
 
@@ -85,7 +98,7 @@ export class TestsController {
   }
 
   @MessagePattern({ cmd: 'tests.update-simulator' })
-  async updateSimulator(@Payload() payload: { id: string, data: any }) {
+  async updateSimulator(@Payload() payload: { id: string; data: any }) {
     return this.testsService.updateSimulator(payload.id, payload.data);
   }
 
@@ -95,8 +108,19 @@ export class TestsController {
   }
 
   @MessagePattern({ cmd: 'tests.evaluate-simulator' })
-  async evaluateSimulator(@Payload() payload: { userId: string, simulatorId: string, decisions: any[] }) {
-    return this.testsService.evaluateSimulator(payload.userId, payload.simulatorId, payload.decisions);
+  async evaluateSimulator(
+    @Payload()
+    payload: {
+      userId: string;
+      simulatorId: string;
+      decisions: any[];
+    },
+  ) {
+    return this.testsService.evaluateSimulator(
+      payload.userId,
+      payload.simulatorId,
+      payload.decisions,
+    );
   }
 
   // --- Complementary Tests ---
@@ -111,14 +135,26 @@ export class TestsController {
   }
 
   @MessagePattern({ cmd: 'tests.submit-complementary-test' })
-  async submitComplementaryTest(@Payload() payload: { userId: string, testId: string, answers: any }) {
-    return this.testsService.submitComplementaryTest(payload.userId, payload.testId, payload.answers);
+  async submitComplementaryTest(
+    @Payload() payload: { userId: string; testId: string; answers: any },
+  ) {
+    return this.testsService.submitComplementaryTest(
+      payload.userId,
+      payload.testId,
+      payload.answers,
+    );
   }
 
   // --- Calibration ---
   @MessagePattern({ cmd: 'tests.submit-calibration' })
-  async submitCalibration(@Payload() payload: { userId: string, moduleId: string, answers: any }) {
-    return this.testsService.submitCalibration(payload.userId, payload.moduleId, payload.answers);
+  async submitCalibration(
+    @Payload() payload: { userId: string; moduleId: string; answers: any },
+  ) {
+    return this.testsService.submitCalibration(
+      payload.userId,
+      payload.moduleId,
+      payload.answers,
+    );
   }
 
   @MessagePattern({ cmd: 'tests.get-calibration' })

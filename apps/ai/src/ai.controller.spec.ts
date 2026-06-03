@@ -33,7 +33,9 @@ describe('AiController', () => {
       };
 
       const expectedResult = { recommendations: ['Engineering', 'Physics'] };
-      jest.spyOn(aiService, 'generateRecommendations').mockResolvedValue(expectedResult as any);
+      jest
+        .spyOn(aiService, 'generateRecommendations')
+        .mockResolvedValue(expectedResult as any);
 
       const result = await aiController.generateRecommendations(payload);
 

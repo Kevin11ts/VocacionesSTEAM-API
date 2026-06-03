@@ -1,7 +1,22 @@
 import { Injectable, Inject, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { User, VocationalTest, AiRecommendation, Question, Option, UserSettings, OtpCode, CreateQuestionDto, Simulator, SimulatorStep, SimulatorOption, ComplementaryTest, UserHistory, CalibrationResult } from '@app/common';
+import {
+  User,
+  VocationalTest,
+  AiRecommendation,
+  Question,
+  Option,
+  UserSettings,
+  OtpCode,
+  CreateQuestionDto,
+  Simulator,
+  SimulatorStep,
+  SimulatorOption,
+  ComplementaryTest,
+  UserHistory,
+  CalibrationResult,
+} from '@app/common';
 import { ClientProxy, RpcException } from '@nestjs/microservices';
 import { lastValueFrom } from 'rxjs';
 
@@ -11,15 +26,24 @@ export class TestsService {
 
   constructor(
     @InjectRepository(User) private readonly userRepository: Repository<User>,
-    @InjectRepository(VocationalTest) private readonly testsRepository: Repository<VocationalTest>,
-    @InjectRepository(Question) private readonly questionRepository: Repository<Question>,
-    @InjectRepository(Option) private readonly optionRepository: Repository<Option>,
-    @InjectRepository(Simulator) private readonly simulatorRepository: Repository<Simulator>,
-    @InjectRepository(SimulatorStep) private readonly simulatorStepRepository: Repository<SimulatorStep>,
-    @InjectRepository(SimulatorOption) private readonly simulatorOptionRepository: Repository<SimulatorOption>,
-    @InjectRepository(ComplementaryTest) private readonly compTestRepository: Repository<ComplementaryTest>,
-    @InjectRepository(UserHistory) private readonly userHistoryRepository: Repository<UserHistory>,
-    @InjectRepository(CalibrationResult) private readonly calibrationRepository: Repository<CalibrationResult>,
+    @InjectRepository(VocationalTest)
+    private readonly testsRepository: Repository<VocationalTest>,
+    @InjectRepository(Question)
+    private readonly questionRepository: Repository<Question>,
+    @InjectRepository(Option)
+    private readonly optionRepository: Repository<Option>,
+    @InjectRepository(Simulator)
+    private readonly simulatorRepository: Repository<Simulator>,
+    @InjectRepository(SimulatorStep)
+    private readonly simulatorStepRepository: Repository<SimulatorStep>,
+    @InjectRepository(SimulatorOption)
+    private readonly simulatorOptionRepository: Repository<SimulatorOption>,
+    @InjectRepository(ComplementaryTest)
+    private readonly compTestRepository: Repository<ComplementaryTest>,
+    @InjectRepository(UserHistory)
+    private readonly userHistoryRepository: Repository<UserHistory>,
+    @InjectRepository(CalibrationResult)
+    private readonly calibrationRepository: Repository<CalibrationResult>,
     @Inject('AI_SERVICE') private readonly aiClient: ClientProxy,
   ) {}
 
@@ -45,7 +69,10 @@ export class TestsService {
   }
 
   async updateQuestion(id: string, data: any) {
-    const question = await this.questionRepository.findOne({ where: { id }, relations: ['options'] });
+    const question = await this.questionRepository.findOne({
+      where: { id },
+      relations: ['options'],
+    });
     if (!question) throw new RpcException('Question not found');
 
     // Si se envían nuevas opciones, TypeORM las actualizará por el cascade: true
@@ -54,27 +81,38 @@ export class TestsService {
   }
 
   async deleteQuestion(id: string) {
-    const question = await this.questionRepository.findOne({ where: { id }, relations: ['options'] });
+    const question = await this.questionRepository.findOne({
+      where: { id },
+      relations: ['options'],
+    });
     if (!question) throw new RpcException('Question not found');
     await this.questionRepository.remove(question);
     return { success: true, message: 'Question deleted' };
   }
 
-  async submitTest(userId: string, answers: Record<string, string>, locationInput?: string) {
+  async submitTest(
+    userId: string,
+    answers: Record<string, string>,
+    locationInput?: string,
+  ) {
     const user = await this.userRepository.findOne({ where: { id: userId } });
     if (!user) throw new RpcException('User not found');
 
     let scores = this.calculateScores(answers);
 
     // Apply Calibration Results
-    const calibrations = await this.calibrationRepository.find({ where: { user: { id: userId } } });
+    const calibrations = await this.calibrationRepository.find({
+      where: { user: { id: userId } },
+    });
     if (calibrations && calibrations.length > 0) {
       scores = this.applyCalibrationToScores(scores, calibrations);
     }
 
     const dominantTraits = this.getDominantTraits(scores);
 
-    const testCount = await this.testsRepository.count({ where: { user: { id: userId } } });
+    const testCount = await this.testsRepository.count({
+      where: { user: { id: userId } },
+    });
     const testName = `Test Vocacional ${testCount + 1}`;
 
     let test = this.testsRepository.create({
@@ -90,12 +128,15 @@ export class TestsService {
     try {
       this.logger.log(`Calling AI Service for Test ${test.id}`);
       aiResponse = await lastValueFrom(
-        this.aiClient.send({ cmd: 'ai.generate-recommendations' }, { 
-          locationInput, 
-          scores,
-          studentName: user.fullname,
-          dominantTraits
-        })
+        this.aiClient.send(
+          { cmd: 'ai.generate-recommendations' },
+          {
+            locationInput,
+            scores,
+            studentName: user.fullname,
+            dominantTraits,
+          },
+        ),
       );
     } catch (error) {
       this.logger.error('Failed to get AI recommendations', error);
@@ -123,7 +164,13 @@ export class TestsService {
     const tests = await this.testsRepository.find({
       where: { user: { id: userId } },
       order: { completedAt: 'DESC' },
-      select: ['id', 'testName', 'completedAt', 'dominantTraits', 'profileScores']
+      select: [
+        'id',
+        'testName',
+        'completedAt',
+        'dominantTraits',
+        'profileScores',
+      ],
     });
     return tests;
   }
@@ -170,23 +217,33 @@ export class TestsService {
   }
 
   async updateTestName(id: string, userId: string, testName: string) {
-    const test = await this.testsRepository.findOne({ where: { id, user: { id: userId } } });
+    const test = await this.testsRepository.findOne({
+      where: { id, user: { id: userId } },
+    });
     if (!test) throw new RpcException('Test not found');
 
     test.testName = testName;
     await this.testsRepository.save(test);
-    return { success: true, message: 'Test name updated', testName: test.testName };
+    return {
+      success: true,
+      message: 'Test name updated',
+      testName: test.testName,
+    };
   }
 
   async deleteTestFromHistory(id: string, userId: string) {
-    const test = await this.testsRepository.findOne({ where: { id, user: { id: userId } } });
+    const test = await this.testsRepository.findOne({
+      where: { id, user: { id: userId } },
+    });
     if (!test) throw new RpcException('Test not found');
 
     await this.testsRepository.remove(test);
     return { success: true, message: 'Test deleted' };
   }
 
-  private calculateScores(answers: Record<string, string>): Record<string, number> {
+  private calculateScores(
+    answers: Record<string, string>,
+  ): Record<string, number> {
     const scores = {
       ciencia: 0,
       tecnologia: 0,
@@ -208,25 +265,28 @@ export class TestsService {
     return scores;
   }
 
-  private applyCalibrationToScores(scores: Record<string, number>, calibrations: CalibrationResult[]): Record<string, number> {
+  private applyCalibrationToScores(
+    scores: Record<string, number>,
+    calibrations: CalibrationResult[],
+  ): Record<string, number> {
     const adjustedScores = { ...scores };
-    
+
     // Aquí se aplica la suma de los valores resultantes de los submódulos.
     // Asumiendo que los test de calibración pueden otorgar puntos extra a ciencias, tecnología, etc.
     // Dado que no se proporcionó una fórmula matemática exacta, sumamos valores por defecto o simulados.
     // TODO: Implementar el mapeo exacto de 'answers' a 'steamTraits' cuando se definan las reglas.
-    
+
     for (const cal of calibrations) {
       if (cal.moduleId === 'gaming_habits') {
-         adjustedScores.tecnologia += 2;
-         adjustedScores.ingenieria += 1;
+        adjustedScores.tecnologia += 2;
+        adjustedScores.ingenieria += 1;
       } else if (cal.moduleId === 'physical_hobbies') {
-         adjustedScores.ciencia += 2;
+        adjustedScores.ciencia += 2;
       } else if (cal.moduleId === 'digital_consumption') {
-         adjustedScores.arte += 1;
+        adjustedScores.arte += 1;
       } else if (cal.moduleId === 'everyday_mechanics') {
-         adjustedScores.ingenieria += 2;
-         adjustedScores.matematicas += 1;
+        adjustedScores.ingenieria += 2;
+        adjustedScores.matematicas += 1;
       }
     }
     return adjustedScores;
@@ -236,19 +296,21 @@ export class TestsService {
     const entries = Object.entries(scores).sort((a, b) => b[1] - a[1]);
     const top1 = entries[0];
     const top2 = entries[1];
-    
+
     const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
-    
+
     if (top2[1] === 0) {
       return cap(top1[0]); // Si el segundo puntaje es 0, solo retorna el primero
     }
-    
+
     return `${cap(top1[0])} + ${cap(top2[0])}`;
   }
 
   // --- Simulators ---
   async getSimulators() {
-    return this.simulatorRepository.find({ select: ['id', 'careerId', 'careerName', 'steamAreaName', 'description'] });
+    return this.simulatorRepository.find({
+      select: ['id', 'careerId', 'careerName', 'steamAreaName', 'description'],
+    });
   }
 
   async getSimulatorById(id: string) {
@@ -285,8 +347,14 @@ export class TestsService {
     return { success: true, message: 'Simulator deleted' };
   }
 
-  async evaluateSimulator(userId: string, simulatorId: string, decisions: any[]) {
-    const simulator = await this.simulatorRepository.findOne({ where: { id: simulatorId } }); // eager loads steps and options
+  async evaluateSimulator(
+    userId: string,
+    simulatorId: string,
+    decisions: any[],
+  ) {
+    const simulator = await this.simulatorRepository.findOne({
+      where: { id: simulatorId },
+    }); // eager loads steps and options
     if (!simulator) throw new RpcException('Simulator not found');
 
     const user = await this.userRepository.findOne({ where: { id: userId } });
@@ -298,22 +366,28 @@ export class TestsService {
       tecnologia: 0,
       ingenieria: 0,
       arte: 0,
-      matematicas: 0
+      matematicas: 0,
     };
 
-    const selectedOptionIds = decisions.map(d => d.selectedOptionId);
-    let totalPossibleScore = 0; // Para calcular afinidad máxima posible si se requiere
-    
+    const selectedOptionIds = decisions.map((d) => d.selectedOptionId);
+    const totalPossibleScore = 0; // Para calcular afinidad máxima posible si se requiere
+
     // Asumiendo que `steps` y `options` son cargadas mediante Eager loading o Relation
     if (simulator.steps) {
       for (const step of simulator.steps) {
         if (step.options) {
           for (const opt of step.options) {
-            if (selectedOptionIds.includes(opt.optionId) && opt.steamTraitWeight) {
+            if (
+              selectedOptionIds.includes(opt.optionId) &&
+              opt.steamTraitWeight
+            ) {
               // Sumar los pesos
-              for (const [trait, weight] of Object.entries(opt.steamTraitWeight)) {
+              for (const [trait, weight] of Object.entries(
+                opt.steamTraitWeight,
+              )) {
                 if (typeof weight === 'number') {
-                  aggregatedScores[trait.toLowerCase()] = (aggregatedScores[trait.toLowerCase()] || 0) + weight;
+                  aggregatedScores[trait.toLowerCase()] =
+                    (aggregatedScores[trait.toLowerCase()] || 0) + weight;
                 }
               }
             }
@@ -323,13 +397,18 @@ export class TestsService {
     }
 
     // 2. Calcular una puntuación de afinidad. (Lógica simplificada: suma total de puntos)
-    const affinityScore = Object.values(aggregatedScores).reduce((a, b) => a + b, 0);
+    const affinityScore = Object.values(aggregatedScores).reduce(
+      (a, b) => a + b,
+      0,
+    );
 
     // 3. Devolver textos predefinidos almacenados en la base de datos basados en el puntaje
     let matchedRule = null;
     if (simulator.feedbackRules && simulator.feedbackRules.length > 0) {
       // Ordenar reglas por puntaje mínimo requerido descendente para encontrar la más alta que cumple
-      const sortedRules = [...simulator.feedbackRules].sort((a, b) => (b.minScore || 0) - (a.minScore || 0));
+      const sortedRules = [...simulator.feedbackRules].sort(
+        (a, b) => (b.minScore || 0) - (a.minScore || 0),
+      );
       for (const rule of sortedRules) {
         if (affinityScore >= (rule.minScore || 0)) {
           matchedRule = rule;
@@ -343,7 +422,9 @@ export class TestsService {
     }
 
     const result = {
-      feedbackMessage: matchedRule?.feedbackMessage || 'Completaste el simulador satisfactoriamente.',
+      feedbackMessage:
+        matchedRule?.feedbackMessage ||
+        'Completaste el simulador satisfactoriamente.',
       strengths: matchedRule?.strengths || [],
       areasForImprovement: matchedRule?.areasForImprovement || [],
       affinityScore: affinityScore,
@@ -379,7 +460,7 @@ export class TestsService {
     const user = await this.userRepository.findOne({ where: { id: userId } });
     if (!user) throw new RpcException('User not found');
 
-    // Static logic for points can be executed here or expected from frontend. 
+    // Static logic for points can be executed here or expected from frontend.
     // We just save the result.
     const result = { answers, completedAt: new Date() };
 
@@ -400,7 +481,9 @@ export class TestsService {
     const user = await this.userRepository.findOne({ where: { id: userId } });
     if (!user) throw new RpcException('User not found');
 
-    let calibration = await this.calibrationRepository.findOne({ where: { user: { id: userId }, moduleId } });
+    let calibration = await this.calibrationRepository.findOne({
+      where: { user: { id: userId }, moduleId },
+    });
     if (calibration) {
       calibration.answers = answers;
     } else {

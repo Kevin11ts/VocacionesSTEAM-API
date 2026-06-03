@@ -1,7 +1,13 @@
 import { Controller } from '@nestjs/common';
 import { MessagePattern, Payload } from '@nestjs/microservices';
 import { AuthService } from './auth.service';
-import { RegisterDto, VerifyOtpDto, LoginDto, ForgotPasswordDto, ResetPasswordDto } from '@app/common';
+import {
+  RegisterDto,
+  VerifyOtpDto,
+  LoginDto,
+  ForgotPasswordDto,
+  ResetPasswordDto,
+} from '@app/common';
 
 @Controller()
 export class AuthController {
@@ -23,7 +29,15 @@ export class AuthController {
   }
 
   @MessagePattern({ cmd: 'auth.oauth-login' })
-  async oauthLogin(@Payload() payload: { email: string, fullname: string, avatarUrl: string, googleId: string }) {
+  async oauthLogin(
+    @Payload()
+    payload: {
+      email: string;
+      fullname: string;
+      avatarUrl: string;
+      googleId: string;
+    },
+  ) {
     return this.authService.oauthLogin(payload);
   }
 

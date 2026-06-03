@@ -1,4 +1,11 @@
-import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, OneToMany } from 'typeorm';
+import {
+  Entity,
+  PrimaryGeneratedColumn,
+  Column,
+  CreateDateColumn,
+  UpdateDateColumn,
+  OneToMany,
+} from 'typeorm';
 import { SimulatorStep } from './simulator-step.entity';
 
 @Entity('simulators')
@@ -18,7 +25,10 @@ export class Simulator {
   @Column()
   description: string;
 
-  @OneToMany(() => SimulatorStep, step => step.simulator, { cascade: true, eager: true })
+  @OneToMany(() => SimulatorStep, (step) => step.simulator, {
+    cascade: true,
+    eager: true,
+  })
   steps: SimulatorStep[];
 
   @Column('jsonb', { default: [] })

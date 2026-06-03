@@ -1,11 +1,34 @@
-import { Controller, Post, Get, Body, Inject, UseGuards, Put, Param, Delete, Patch } from '@nestjs/common';
+import {
+  Controller,
+  Post,
+  Get,
+  Body,
+  Inject,
+  UseGuards,
+  Put,
+  Param,
+  Delete,
+  Patch,
+} from '@nestjs/common';
 import { IsObject, IsOptional, IsString } from 'class-validator';
 import { ClientProxy } from '@nestjs/microservices';
-import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiBody, ApiProperty, ApiParam } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiResponse,
+  ApiBearerAuth,
+  ApiBody,
+  ApiProperty,
+  ApiParam,
+} from '@nestjs/swagger';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { CurrentUser } from './decorators/current-user.decorator';
 import { lastValueFrom } from 'rxjs';
-import { CreateQuestionDto, UpdateQuestionDto, CreateBulkQuestionsDto } from '@app/common';
+import {
+  CreateQuestionDto,
+  UpdateQuestionDto,
+  CreateBulkQuestionsDto,
+} from '@app/common';
 
 class SubmitTestDto {
   @ApiProperty({ example: { '1': 'A', '2': 'C' } })
@@ -29,13 +52,20 @@ class UpdateTestNameDto {
 @UseGuards(JwtAuthGuard)
 @Controller('tests')
 export class TestsGatewayController {
-  constructor(@Inject('TESTS_SERVICE') private readonly testsClient: ClientProxy) {}
+  constructor(
+    @Inject('TESTS_SERVICE') private readonly testsClient: ClientProxy,
+  ) {}
 
   @Get('questions')
   @ApiOperation({ summary: 'Get all test questions' })
-  @ApiResponse({ status: 200, description: 'List of questions and their options' })
+  @ApiResponse({
+    status: 200,
+    description: 'List of questions and their options',
+  })
   async getQuestions() {
-    return lastValueFrom(this.testsClient.send({ cmd: 'tests.get-questions' }, {}));
+    return lastValueFrom(
+      this.testsClient.send({ cmd: 'tests.get-questions' }, {}),
+    );
   }
 
   @Post('questions')
@@ -43,7 +73,9 @@ export class TestsGatewayController {
   @ApiResponse({ status: 201, description: 'Question created' })
   @ApiBody({ type: CreateQuestionDto })
   async createQuestion(@Body() data: CreateQuestionDto) {
-    return lastValueFrom(this.testsClient.send({ cmd: 'tests.create-question' }, data));
+    return lastValueFrom(
+      this.testsClient.send({ cmd: 'tests.create-question' }, data),
+    );
   }
 
   @Post('questions/bulk')
@@ -54,8 +86,8 @@ export class TestsGatewayController {
     return lastValueFrom(
       this.testsClient.send(
         { cmd: 'tests.create-bulk-questions' },
-        body.questions
-      )
+        body.questions,
+      ),
     );
   }
 
@@ -64,8 +96,13 @@ export class TestsGatewayController {
   @ApiResponse({ status: 200, description: 'Question updated' })
   @ApiParam({ name: 'id', description: 'Question UUID' })
   @ApiBody({ type: UpdateQuestionDto })
-  async updateQuestion(@Param('id') id: string, @Body() data: UpdateQuestionDto) {
-    return lastValueFrom(this.testsClient.send({ cmd: 'tests.update-question' }, { id, data }));
+  async updateQuestion(
+    @Param('id') id: string,
+    @Body() data: UpdateQuestionDto,
+  ) {
+    return lastValueFrom(
+      this.testsClient.send({ cmd: 'tests.update-question' }, { id, data }),
+    );
   }
 
   @Delete('questions/:id')
@@ -73,29 +110,43 @@ export class TestsGatewayController {
   @ApiResponse({ status: 200, description: 'Question deleted' })
   @ApiParam({ name: 'id', description: 'Question UUID' })
   async deleteQuestion(@Param('id') id: string) {
-    return lastValueFrom(this.testsClient.send({ cmd: 'tests.delete-question' }, { id }));
+    return lastValueFrom(
+      this.testsClient.send({ cmd: 'tests.delete-question' }, { id }),
+    );
   }
 
   @Post('submit')
   @ApiOperation({ summary: 'Submit vocational test answers' })
-  @ApiResponse({ status: 201, description: 'Test processed, recommendations generated' })
+  @ApiResponse({
+    status: 201,
+    description: 'Test processed, recommendations generated',
+  })
   @ApiBody({ type: SubmitTestDto })
   async submitTest(@CurrentUser() user: any, @Body() body: SubmitTestDto) {
     return lastValueFrom(
-      this.testsClient.send({ cmd: 'tests.submit' }, { 
-        userId: user.id, 
-        answers: body.answers, 
-        locationInput: body.locationInput 
-      })
+      this.testsClient.send(
+        { cmd: 'tests.submit' },
+        {
+          userId: user.id,
+          answers: body.answers,
+          locationInput: body.locationInput,
+        },
+      ),
     );
   }
 
   @Get('latest')
-  @ApiOperation({ summary: 'Get the latest vocational test for the current user' })
-  @ApiResponse({ status: 200, description: 'Latest test details and recommendations, or null if no tests exist' })
+  @ApiOperation({
+    summary: 'Get the latest vocational test for the current user',
+  })
+  @ApiResponse({
+    status: 200,
+    description:
+      'Latest test details and recommendations, or null if no tests exist',
+  })
   async getLatestTest(@CurrentUser() user: any) {
     return lastValueFrom(
-      this.testsClient.send({ cmd: 'tests.get-latest' }, { userId: user.id })
+      this.testsClient.send({ cmd: 'tests.get-latest' }, { userId: user.id }),
     );
   }
 
@@ -104,17 +155,23 @@ export class TestsGatewayController {
   @ApiResponse({ status: 200, description: 'List of previous test results' })
   async getTestHistory(@CurrentUser() user: any) {
     return lastValueFrom(
-      this.testsClient.send({ cmd: 'tests.get-history' }, { userId: user.id })
+      this.testsClient.send({ cmd: 'tests.get-history' }, { userId: user.id }),
     );
   }
 
   @Get('history/:id')
   @ApiOperation({ summary: 'Get details of a specific test from history' })
-  @ApiResponse({ status: 200, description: 'Full test details and recommendations' })
+  @ApiResponse({
+    status: 200,
+    description: 'Full test details and recommendations',
+  })
   @ApiParam({ name: 'id', description: 'Test UUID' })
   async getTestById(@Param('id') id: string, @CurrentUser() user: any) {
     return lastValueFrom(
-      this.testsClient.send({ cmd: 'tests.get-by-id' }, { id, userId: user.id })
+      this.testsClient.send(
+        { cmd: 'tests.get-by-id' },
+        { id, userId: user.id },
+      ),
     );
   }
 
@@ -123,9 +180,16 @@ export class TestsGatewayController {
   @ApiResponse({ status: 200, description: 'Test name updated' })
   @ApiParam({ name: 'id', description: 'Test UUID' })
   @ApiBody({ type: UpdateTestNameDto })
-  async updateTestName(@Param('id') id: string, @CurrentUser() user: any, @Body() body: UpdateTestNameDto) {
+  async updateTestName(
+    @Param('id') id: string,
+    @CurrentUser() user: any,
+    @Body() body: UpdateTestNameDto,
+  ) {
     return lastValueFrom(
-      this.testsClient.send({ cmd: 'tests.update-name' }, { id, userId: user.id, testName: body.testName })
+      this.testsClient.send(
+        { cmd: 'tests.update-name' },
+        { id, userId: user.id, testName: body.testName },
+      ),
     );
   }
 
@@ -133,9 +197,15 @@ export class TestsGatewayController {
   @ApiOperation({ summary: 'Delete a test from history' })
   @ApiResponse({ status: 200, description: 'Test deleted' })
   @ApiParam({ name: 'id', description: 'Test UUID' })
-  async deleteTestFromHistory(@Param('id') id: string, @CurrentUser() user: any) {
+  async deleteTestFromHistory(
+    @Param('id') id: string,
+    @CurrentUser() user: any,
+  ) {
     return lastValueFrom(
-      this.testsClient.send({ cmd: 'tests.delete-test' }, { id, userId: user.id })
+      this.testsClient.send(
+        { cmd: 'tests.delete-test' },
+        { id, userId: user.id },
+      ),
     );
   }
 }

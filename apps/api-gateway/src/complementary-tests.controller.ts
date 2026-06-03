@@ -1,6 +1,20 @@
-import { Controller, Get, Post, Param, Body, UseGuards, Inject, Request } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Param,
+  Body,
+  UseGuards,
+  Inject,
+  Request,
+} from '@nestjs/common';
 import { ClientProxy } from '@nestjs/microservices';
-import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiResponse,
+  ApiBearerAuth,
+} from '@nestjs/swagger';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { RolesGuard } from './guards/roles.guard';
 import { Roles } from './decorators/roles.decorator';
@@ -10,33 +24,57 @@ import { lastValueFrom } from 'rxjs';
 @ApiBearerAuth()
 @Controller('tests')
 export class ComplementaryTestsController {
-  constructor(@Inject('TESTS_SERVICE') private readonly testsClient: ClientProxy) {}
+  constructor(
+    @Inject('TESTS_SERVICE') private readonly testsClient: ClientProxy,
+  ) {}
 
   @Get(':testId')
   async getComplementaryTest(@Param('testId') testId: string) {
-    return lastValueFrom(this.testsClient.send({ cmd: 'tests.get-complementary-test' }, { testId }));
+    return lastValueFrom(
+      this.testsClient.send(
+        { cmd: 'tests.get-complementary-test' },
+        { testId },
+      ),
+    );
   }
 
   @Post(':testId/submit')
   @UseGuards(JwtAuthGuard)
-  async submitComplementaryTest(@Param('testId') testId: string, @Body() data: any, @Request() req: any) {
-    return lastValueFrom(this.testsClient.send({ cmd: 'tests.submit-complementary-test' }, {
-      userId: req.user.userId,
-      testId,
-      answers: data.answers,
-    }));
+  async submitComplementaryTest(
+    @Param('testId') testId: string,
+    @Body() data: any,
+    @Request() req: any,
+  ) {
+    return lastValueFrom(
+      this.testsClient.send(
+        { cmd: 'tests.submit-complementary-test' },
+        {
+          userId: req.user.userId,
+          testId,
+          answers: data.answers,
+        },
+      ),
+    );
   }
 
   @ApiOperation({ summary: 'Submit answers for a calibration module' })
-  @ApiResponse({ status: 201, description: 'Calibration submitted successfully' })
+  @ApiResponse({
+    status: 201,
+    description: 'Calibration submitted successfully',
+  })
   @Post('calibration')
   @UseGuards(JwtAuthGuard)
   async submitCalibration(@Body() data: any, @Request() req: any) {
-    return lastValueFrom(this.testsClient.send({ cmd: 'tests.submit-calibration' }, {
-      userId: req.user.userId,
-      moduleId: data.moduleId,
-      answers: data.answers,
-    }));
+    return lastValueFrom(
+      this.testsClient.send(
+        { cmd: 'tests.submit-calibration' },
+        {
+          userId: req.user.userId,
+          moduleId: data.moduleId,
+          answers: data.answers,
+        },
+      ),
+    );
   }
 
   @ApiOperation({ summary: 'Get calibration answers for a user (Admin)' })
@@ -45,7 +83,9 @@ export class ComplementaryTestsController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('admin')
   async getCalibration(@Param('userId') userId: string) {
-    return lastValueFrom(this.testsClient.send({ cmd: 'tests.get-calibration' }, { userId }));
+    return lastValueFrom(
+      this.testsClient.send({ cmd: 'tests.get-calibration' }, { userId }),
+    );
   }
 
   @ApiOperation({ summary: 'Get calibration answers for the logged-in user' })
@@ -53,7 +93,12 @@ export class ComplementaryTestsController {
   @Get('calibration/me')
   @UseGuards(JwtAuthGuard)
   async getMyCalibration(@Request() req: any) {
-    return lastValueFrom(this.testsClient.send({ cmd: 'tests.get-calibration' }, { userId: req.user.userId }));
+    return lastValueFrom(
+      this.testsClient.send(
+        { cmd: 'tests.get-calibration' },
+        { userId: req.user.userId },
+      ),
+    );
   }
 }
 
@@ -63,10 +108,14 @@ export class ComplementaryTestsController {
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles('admin')
 export class AdminComplementaryTestsController {
-  constructor(@Inject('TESTS_SERVICE') private readonly testsClient: ClientProxy) {}
+  constructor(
+    @Inject('TESTS_SERVICE') private readonly testsClient: ClientProxy,
+  ) {}
 
   @Post()
   async createComplementaryTest(@Body() data: any) {
-    return lastValueFrom(this.testsClient.send({ cmd: 'tests.create-complementary-test' }, data));
+    return lastValueFrom(
+      this.testsClient.send({ cmd: 'tests.create-complementary-test' }, data),
+    );
   }
 }

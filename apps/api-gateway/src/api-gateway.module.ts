@@ -9,9 +9,18 @@ import { TestsGatewayController } from './tests.controller';
 import { AiLogsGatewayController } from './ai-logs.controller';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { GoogleStrategy } from './strategies/google.strategy';
-import { UniversitiesController, AdminUniversitiesController } from './universities.controller';
-import { SimulatorsController, AdminSimulatorsController } from './simulators.controller';
-import { ComplementaryTestsController, AdminComplementaryTestsController } from './complementary-tests.controller';
+import {
+  UniversitiesController,
+  AdminUniversitiesController,
+} from './universities.controller';
+import {
+  SimulatorsController,
+  AdminSimulatorsController,
+} from './simulators.controller';
+import {
+  ComplementaryTestsController,
+  AdminComplementaryTestsController,
+} from './complementary-tests.controller';
 import { AdminStatsController } from './admin.controller';
 
 @Module({
@@ -30,7 +39,10 @@ import { AdminStatsController } from './admin.controller';
         inject: [ConfigService],
         useFactory: (config: ConfigService) => ({
           transport: Transport.TCP,
-          options: { host: config.get<string>('HOST_AUTH', '127.0.0.1'), port: config.get<number>('PORT_AUTH', 3001) },
+          options: {
+            host: config.get<string>('HOST_AUTH', '127.0.0.1'),
+            port: config.get<number>('PORT_AUTH', 3001),
+          },
         }),
       },
       {
@@ -38,7 +50,10 @@ import { AdminStatsController } from './admin.controller';
         inject: [ConfigService],
         useFactory: (config: ConfigService) => ({
           transport: Transport.TCP,
-          options: { host: config.get<string>('HOST_USERS', '127.0.0.1'), port: config.get<number>('PORT_USERS', 3002) },
+          options: {
+            host: config.get<string>('HOST_USERS', '127.0.0.1'),
+            port: config.get<number>('PORT_USERS', 3002),
+          },
         }),
       },
       {
@@ -46,7 +61,10 @@ import { AdminStatsController } from './admin.controller';
         inject: [ConfigService],
         useFactory: (config: ConfigService) => ({
           transport: Transport.TCP,
-          options: { host: config.get<string>('HOST_TESTS', '127.0.0.1'), port: config.get<number>('PORT_TESTS', 3003) },
+          options: {
+            host: config.get<string>('HOST_TESTS', '127.0.0.1'),
+            port: config.get<number>('PORT_TESTS', 3003),
+          },
         }),
       },
       {
@@ -54,15 +72,18 @@ import { AdminStatsController } from './admin.controller';
         inject: [ConfigService],
         useFactory: (config: ConfigService) => ({
           transport: Transport.TCP,
-          options: { host: config.get<string>('HOST_AI', '127.0.0.1'), port: config.get<number>('PORT_AI', 3004) },
+          options: {
+            host: config.get<string>('HOST_AI', '127.0.0.1'),
+            port: config.get<number>('PORT_AI', 3004),
+          },
         }),
       },
     ]),
   ],
   controllers: [
-    AuthGatewayController, 
-    UsersGatewayController, 
-    TestsGatewayController, 
+    AuthGatewayController,
+    UsersGatewayController,
+    TestsGatewayController,
     AiLogsGatewayController,
     UniversitiesController,
     AdminUniversitiesController,
@@ -70,7 +91,7 @@ import { AdminStatsController } from './admin.controller';
     AdminSimulatorsController,
     ComplementaryTestsController,
     AdminComplementaryTestsController,
-    AdminStatsController
+    AdminStatsController,
   ],
   providers: [JwtStrategy, GoogleStrategy],
 })

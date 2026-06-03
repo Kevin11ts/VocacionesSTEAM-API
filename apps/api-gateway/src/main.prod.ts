@@ -14,13 +14,13 @@ import { RpcToHttpExceptionFilter } from './filters/rpc-exception.filter';
 
 async function bootstrap() {
   const logger = new Logger('ProductionMonolith');
-  
+
   // 1. Crear la Aplicación Principal "Todo-en-uno"
   // Usamos ProductionModule que ya importa y agrupa a todos los demás módulos
   const app = await NestFactory.create(ProductionModule);
-  
+
   const configService = app.get(ConfigService);
-  
+
   // Usamos 'PORT' como variable estándar de Railway
   const apiPort = configService.get<number>('PORT', 3000);
 
@@ -42,16 +42,22 @@ async function bootstrap() {
         port: ms.port,
       },
     });
-    logger.log(`Microservicio ${ms.name} conectado internamente en el puerto ${ms.port}`);
+    logger.log(
+      `Microservicio ${ms.name} conectado internamente en el puerto ${ms.port}`,
+    );
   }
 
   // 3. Configuración Global (Copia de tu main.ts del API Gateway)
   app.setGlobalPrefix('api/v1');
-  const corsOrigins = (process.env.CORS_ORIGIN || '*').split(',').map(o => o.trim());
-  app.enableCors({ origin: corsOrigins.length === 1 ? corsOrigins[0] : corsOrigins });
-  
+  const corsOrigins = (process.env.CORS_ORIGIN || '*')
+    .split(',')
+    .map((o) => o.trim());
+  app.enableCors({
+    origin: corsOrigins.length === 1 ? corsOrigins[0] : corsOrigins,
+  });
+
   app.useGlobalFilters(new RpcToHttpExceptionFilter());
-  
+
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,
@@ -62,20 +68,26 @@ async function bootstrap() {
   // 4. Configurar Swagger
   const config = new DocumentBuilder()
     .setTitle('STEAM Vocations API (Monolito Prod)')
-    .setDescription('Versión Unificada y Óptima para Producción de todos los microservicios')
+    .setDescription(
+      'Versión Unificada y Óptima para Producción de todos los microservicios',
+    )
     .setVersion('1.0')
     .addBearerAuth()
     .build();
-    
+
   const document = SwaggerModule.createDocument(app, config);
   SwaggerModule.setup('api', app, document);
 
   // 5. Iniciar Microservicios y API HTTP
   await app.startAllMicroservices();
   await app.listen(apiPort);
-  
-  logger.log(`🚀 Monolito de Producción ejecutándose en: http://localhost:${apiPort}/api/v1`);
-  logger.log(`📚 Documentación de Swagger disponible en: http://localhost:${apiPort}/api`);
+
+  logger.log(
+    `🚀 Monolito de Producción ejecutándose en: http://localhost:${apiPort}/api/v1`,
+  );
+  logger.log(
+    `📚 Documentación de Swagger disponible en: http://localhost:${apiPort}/api`,
+  );
 }
 
 bootstrap();

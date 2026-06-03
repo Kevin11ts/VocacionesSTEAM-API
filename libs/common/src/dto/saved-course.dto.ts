@@ -18,11 +18,15 @@ export class CreateSavedCourseDto {
   @IsBoolean()
   isFree: boolean;
 
-  @ApiProperty({ example: 'Aprende los fundamentos del Machine Learning y Deep Learning...' })
+  @ApiProperty({
+    example: 'Aprende los fundamentos del Machine Learning y Deep Learning...',
+  })
   @IsString()
   description: string;
 
-  @ApiProperty({ example: 'Módulo 1: Conceptos básicos\nMódulo 2: Redes Neuronales...' })
+  @ApiProperty({
+    example: 'Módulo 1: Conceptos básicos\nMódulo 2: Redes Neuronales...',
+  })
   @IsString()
   syllabus: string;
 

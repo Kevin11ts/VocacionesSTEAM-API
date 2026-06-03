@@ -18,6 +18,8 @@ export class Question {
   @Column({ default: 'activo' })
   status: string;
 
-  @OneToMany(() => Option, (option: Option) => option.question, { cascade: true })
+  @OneToMany(() => Option, (option: Option) => option.question, {
+    cascade: true,
+  })
   options: Option[];
 }

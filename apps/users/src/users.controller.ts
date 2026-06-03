@@ -13,12 +13,16 @@ export class UsersController {
   }
 
   @MessagePattern({ cmd: 'users.update-avatar' })
-  async updateAvatar(@Payload() payload: { userId: string; avatarUrl: string }) {
+  async updateAvatar(
+    @Payload() payload: { userId: string; avatarUrl: string },
+  ) {
     return this.usersService.updateAvatar(payload.userId, payload.avatarUrl);
   }
 
   @MessagePattern({ cmd: 'users.update-settings' })
-  async updateSettings(@Payload() payload: { userId: string; settings: Partial<UserSettings> }) {
+  async updateSettings(
+    @Payload() payload: { userId: string; settings: Partial<UserSettings> },
+  ) {
     return this.usersService.updateSettings(payload.userId, payload.settings);
   }
 
@@ -35,8 +39,13 @@ export class UsersController {
   }
 
   @MessagePattern({ cmd: 'users.remove-saved-university' })
-  async removeSavedUniversity(@Payload() payload: { userId: string; universityId: string }) {
-    return this.usersService.removeSavedUniversity(payload.userId, payload.universityId);
+  async removeSavedUniversity(
+    @Payload() payload: { userId: string; universityId: string },
+  ) {
+    return this.usersService.removeSavedUniversity(
+      payload.userId,
+      payload.universityId,
+    );
   }
 
   // --- SAVED COURSES ---
@@ -52,8 +61,13 @@ export class UsersController {
   }
 
   @MessagePattern({ cmd: 'users.remove-saved-course' })
-  async removeSavedCourse(@Payload() payload: { userId: string; courseId: string }) {
-    return this.usersService.removeSavedCourse(payload.userId, payload.courseId);
+  async removeSavedCourse(
+    @Payload() payload: { userId: string; courseId: string },
+  ) {
+    return this.usersService.removeSavedCourse(
+      payload.userId,
+      payload.courseId,
+    );
   }
 
   // --- ADMINISTRADOR CRUD ---

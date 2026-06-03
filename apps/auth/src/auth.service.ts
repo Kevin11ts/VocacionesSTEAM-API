@@ -1,7 +1,16 @@
 import { Injectable, Inject } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { RegisterDto, VerifyOtpDto, LoginDto, ForgotPasswordDto, ResetPasswordDto, User, OtpCode, UserSettings } from '@app/common';
+import {
+  RegisterDto,
+  VerifyOtpDto,
+  LoginDto,
+  ForgotPasswordDto,
+  ResetPasswordDto,
+  User,
+  OtpCode,
+  UserSettings,
+} from '@app/common';
 import { JwtService } from '@nestjs/jwt';
 import { ClientProxy, RpcException } from '@nestjs/microservices';
 import * as bcrypt from 'bcrypt';
@@ -10,13 +19,16 @@ import * as bcrypt from 'bcrypt';
 export class AuthService {
   constructor(
     @InjectRepository(User) private readonly userRepository: Repository<User>,
-    @InjectRepository(OtpCode) private readonly otpRepository: Repository<OtpCode>,
+    @InjectRepository(OtpCode)
+    private readonly otpRepository: Repository<OtpCode>,
     private readonly jwtService: JwtService,
     @Inject('MAIL_SERVICE') private readonly mailClient: ClientProxy,
   ) {}
 
   async register(data: RegisterDto) {
-    const existingUser = await this.userRepository.findOne({ where: { email: data.email } });
+    const existingUser = await this.userRepository.findOne({
+      where: { email: data.email },
+    });
     if (existingUser) {
       throw new RpcException('El correo electrónico ya está en uso');
     }
@@ -34,24 +46,28 @@ export class AuthService {
   }
 
   async verifyOtp(data: VerifyOtpDto) {
-    const otpRecord = await this.otpRepository.findOne({ 
-      where: { email: data.email, code: data.code, purpose: data.purpose } 
+    const otpRecord = await this.otpRepository.findOne({
+      where: { email: data.email, code: data.code, purpose: data.purpose },
     });
 
     if (!otpRecord) {
       // Intentar encontrar cualquier OTP para este email y propósito para incrementar intentos
-      const anyOtp = await this.otpRepository.findOne({ 
-        where: { email: data.email, purpose: data.purpose } 
+      const anyOtp = await this.otpRepository.findOne({
+        where: { email: data.email, purpose: data.purpose },
       });
-      
+
       if (anyOtp) {
         anyOtp.attempts += 1;
         if (anyOtp.attempts >= 3) {
           await this.otpRepository.remove(anyOtp);
-          throw new RpcException('Demasiados intentos fallidos. Por favor, solicita un nuevo código.');
+          throw new RpcException(
+            'Demasiados intentos fallidos. Por favor, solicita un nuevo código.',
+          );
         }
         await this.otpRepository.save(anyOtp);
-        throw new RpcException(`Código inválido. Te quedan ${3 - anyOtp.attempts} intentos.`);
+        throw new RpcException(
+          `Código inválido. Te quedan ${3 - anyOtp.attempts} intentos.`,
+        );
       }
       throw new RpcException('Código inválido');
     }
@@ -63,7 +79,7 @@ export class AuthService {
 
     await this.otpRepository.remove(otpRecord);
 
-    const user = await this.userRepository.findOne({ 
+    const user = await this.userRepository.findOne({
       where: { email: data.email },
       relations: ['settings'],
     });
@@ -75,20 +91,30 @@ export class AuthService {
     }
 
     const { password: _, ...safeUser } = user;
-    const token = this.jwtService.sign({ sub: user.id, email: user.email, role: user.role });
+    const token = this.jwtService.sign({
+      sub: user.id,
+      email: user.email,
+      role: user.role,
+    });
     return { accessToken: token, user: safeUser };
   }
 
   async login(data: LoginDto) {
-    const user = await this.userRepository.findOne({ where: { email: data.email } });
+    const user = await this.userRepository.findOne({
+      where: { email: data.email },
+    });
     if (!user || !user.password) {
       throw new RpcException('Credenciales inválidas');
     }
 
     // Verificar si la cuenta está bloqueada
     if (user.lockUntil && user.lockUntil > new Date()) {
-      const remainingMinutes = Math.ceil((user.lockUntil.getTime() - new Date().getTime()) / 60000);
-      throw new RpcException(`Cuenta bloqueada. Intenta de nuevo en ${remainingMinutes} minutos.`);
+      const remainingMinutes = Math.ceil(
+        (user.lockUntil.getTime() - new Date().getTime()) / 60000,
+      );
+      throw new RpcException(
+        `Cuenta bloqueada. Intenta de nuevo en ${remainingMinutes} minutos.`,
+      );
     }
 
     const isMatch = await bcrypt.compare(data.password, user.password);
@@ -98,7 +124,9 @@ export class AuthService {
         const lockDuration = 30; // 30 minutos
         user.lockUntil = new Date(Date.now() + lockDuration * 60000);
         await this.userRepository.save(user);
-        throw new RpcException(`Demasiados intentos fallidos. Cuenta bloqueada por ${lockDuration} minutos.`);
+        throw new RpcException(
+          `Demasiados intentos fallidos. Cuenta bloqueada por ${lockDuration} minutos.`,
+        );
       }
       await this.userRepository.save(user);
       throw new RpcException('Credenciales inválidas');
@@ -117,15 +145,21 @@ export class AuthService {
   }
 
   async forgotPassword(data: ForgotPasswordDto) {
-    const user = await this.userRepository.findOne({ where: { email: data.email } });
+    const user = await this.userRepository.findOne({
+      where: { email: data.email },
+    });
     if (!user) {
       // Respuesta genérica para no revelar si el correo existe
-      return { message: `Si el correo ${data.email} está registrado, se ha enviado un código.` };
+      return {
+        message: `Si el correo ${data.email} está registrado, se ha enviado un código.`,
+      };
     }
 
     // Solo usuarios con contraseña (no exclusivamente OAuth) pueden recuperarla
     if (!user.password) {
-      throw new RpcException('Esta cuenta usa inicio de sesión con Google. La recuperación de contraseña no está disponible.');
+      throw new RpcException(
+        'Esta cuenta usa inicio de sesión con Google. La recuperación de contraseña no está disponible.',
+      );
     }
 
     return this.generateAndSendOtp(data.email, 'recovery');
@@ -137,18 +171,22 @@ export class AuthService {
     });
 
     if (!otpRecord) {
-      const anyOtp = await this.otpRepository.findOne({ 
-        where: { email: data.email, purpose: 'recovery' } 
+      const anyOtp = await this.otpRepository.findOne({
+        where: { email: data.email, purpose: 'recovery' },
       });
-      
+
       if (anyOtp) {
         anyOtp.attempts += 1;
         if (anyOtp.attempts >= 3) {
           await this.otpRepository.remove(anyOtp);
-          throw new RpcException('Demasiados intentos fallidos. Por favor, solicita un nuevo código.');
+          throw new RpcException(
+            'Demasiados intentos fallidos. Por favor, solicita un nuevo código.',
+          );
         }
         await this.otpRepository.save(anyOtp);
-        throw new RpcException(`Código inválido. Te quedan ${3 - anyOtp.attempts} intentos.`);
+        throw new RpcException(
+          `Código inválido. Te quedan ${3 - anyOtp.attempts} intentos.`,
+        );
       }
       throw new RpcException('Código inválido');
     }
@@ -160,7 +198,9 @@ export class AuthService {
 
     await this.otpRepository.remove(otpRecord);
 
-    const user = await this.userRepository.findOne({ where: { email: data.email } });
+    const user = await this.userRepository.findOne({
+      where: { email: data.email },
+    });
     if (!user) throw new RpcException('Usuario no encontrado');
 
     user.password = await bcrypt.hash(data.newPassword, 10);
@@ -169,27 +209,40 @@ export class AuthService {
     return { message: 'Contraseña actualizada exitosamente' };
   }
 
-  private async generateAndSendOtp(email: string, purpose: 'register' | 'recovery' | 'login') {
+  private async generateAndSendOtp(
+    email: string,
+    purpose: 'register' | 'recovery' | 'login',
+  ) {
     const code = Math.floor(100000 + Math.random() * 900000).toString(); // 6 dígitos
     const expiresAt = new Date();
     expiresAt.setMinutes(expiresAt.getMinutes() + 15);
 
     await this.otpRepository.delete({ email, purpose }); // Eliminar OTPs anteriores para el mismo propósito
 
-    const newOtp = this.otpRepository.create({ email, code, purpose, expiresAt });
+    const newOtp = this.otpRepository.create({
+      email,
+      code,
+      purpose,
+      expiresAt,
+    });
     await this.otpRepository.save(newOtp);
 
     // Enviar mensaje asíncrono al servicio de correo
     this.mailClient.emit('mail.send-otp', { email, code, purpose });
 
-    return { 
+    return {
       message: `Código enviado a ${email}`,
       otpCode: code, // Solo para desarrollo/pruebas
     };
   }
 
-  async oauthLogin(data: { email: string, fullname: string, avatarUrl: string, googleId: string }) {
-    let user = await this.userRepository.findOne({ 
+  async oauthLogin(data: {
+    email: string;
+    fullname: string;
+    avatarUrl: string;
+    googleId: string;
+  }) {
+    let user = await this.userRepository.findOne({
       where: { email: data.email },
       relations: ['settings'],
     });
@@ -211,7 +264,11 @@ export class AuthService {
     }
 
     const { password: _, ...safeUser } = user;
-    const token = this.jwtService.sign({ sub: user.id, email: user.email, role: user.role });
+    const token = this.jwtService.sign({
+      sub: user.id,
+      email: user.email,
+      role: user.role,
+    });
     return { accessToken: token, user: safeUser };
   }
 }

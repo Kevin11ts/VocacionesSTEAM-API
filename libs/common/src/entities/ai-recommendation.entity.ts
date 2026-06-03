@@ -1,4 +1,10 @@
-import { Entity, PrimaryGeneratedColumn, Column, OneToOne, JoinColumn } from 'typeorm';
+import {
+  Entity,
+  PrimaryGeneratedColumn,
+  Column,
+  OneToOne,
+  JoinColumn,
+} from 'typeorm';
 import { VocationalTest } from './vocational-test.entity';
 
 @Entity('ai_recommendations')
@@ -6,7 +12,9 @@ export class AiRecommendation {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @OneToOne(() => VocationalTest, test => test.recommendation, { onDelete: 'CASCADE' })
+  @OneToOne(() => VocationalTest, (test) => test.recommendation, {
+    onDelete: 'CASCADE',
+  })
   @JoinColumn()
   test: VocationalTest;
 

@@ -1,4 +1,12 @@
-import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, ManyToOne, OneToMany } from 'typeorm';
+import {
+  Entity,
+  PrimaryGeneratedColumn,
+  Column,
+  CreateDateColumn,
+  UpdateDateColumn,
+  ManyToOne,
+  OneToMany,
+} from 'typeorm';
 import { Simulator } from './simulator.entity';
 import { SimulatorOption } from './simulator-option.entity';
 
@@ -19,10 +27,15 @@ export class SimulatorStep {
   @Column()
   content: string;
 
-  @ManyToOne(() => Simulator, simulator => simulator.steps, { onDelete: 'CASCADE' })
+  @ManyToOne(() => Simulator, (simulator) => simulator.steps, {
+    onDelete: 'CASCADE',
+  })
   simulator: Simulator;
 
-  @OneToMany(() => SimulatorOption, option => option.step, { cascade: true, eager: true })
+  @OneToMany(() => SimulatorOption, (option) => option.step, {
+    cascade: true,
+    eager: true,
+  })
   options: SimulatorOption[];
 
   @CreateDateColumn()

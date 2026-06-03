@@ -1,4 +1,11 @@
-import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, CreateDateColumn, UpdateDateColumn } from 'typeorm';
+import {
+  Entity,
+  PrimaryGeneratedColumn,
+  Column,
+  ManyToOne,
+  CreateDateColumn,
+  UpdateDateColumn,
+} from 'typeorm';
 import { User } from './user.entity';
 
 @Entity('saved_courses')
@@ -6,7 +13,7 @@ export class SavedCourse {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @ManyToOne(() => User, user => user.savedCourses, { onDelete: 'CASCADE' })
+  @ManyToOne(() => User, (user) => user.savedCourses, { onDelete: 'CASCADE' })
   user: User;
 
   @Column()

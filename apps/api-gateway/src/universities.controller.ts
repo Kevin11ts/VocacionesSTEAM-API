@@ -1,4 +1,14 @@
-import { Controller, Get, Post, Put, Delete, Param, Body, UseGuards, Inject } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Put,
+  Delete,
+  Param,
+  Body,
+  UseGuards,
+  Inject,
+} from '@nestjs/common';
 import { ClientProxy } from '@nestjs/microservices';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { RolesGuard } from './guards/roles.guard';
@@ -11,7 +21,9 @@ export class UniversitiesController {
 
   @Get()
   async getUniversities() {
-    return lastValueFrom(this.aiClient.send({ cmd: 'ai.get-universities' }, {}));
+    return lastValueFrom(
+      this.aiClient.send({ cmd: 'ai.get-universities' }, {}),
+    );
   }
 }
 
@@ -23,16 +35,22 @@ export class AdminUniversitiesController {
 
   @Post()
   async createUniversity(@Body() data: any) {
-    return lastValueFrom(this.aiClient.send({ cmd: 'ai.create-university' }, data));
+    return lastValueFrom(
+      this.aiClient.send({ cmd: 'ai.create-university' }, data),
+    );
   }
 
   @Put(':id')
   async updateUniversity(@Param('id') id: string, @Body() data: any) {
-    return lastValueFrom(this.aiClient.send({ cmd: 'ai.update-university' }, { id, data }));
+    return lastValueFrom(
+      this.aiClient.send({ cmd: 'ai.update-university' }, { id, data }),
+    );
   }
 
   @Delete(':id')
   async deleteUniversity(@Param('id') id: string) {
-    return lastValueFrom(this.aiClient.send({ cmd: 'ai.delete-university' }, { id }));
+    return lastValueFrom(
+      this.aiClient.send({ cmd: 'ai.delete-university' }, { id }),
+    );
   }
 }

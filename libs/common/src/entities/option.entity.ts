@@ -18,6 +18,8 @@ export class Option {
   @Column()
   steamTrait: string; // ciencia, tecnologia, ingenieria, arte, matematicas
 
-  @ManyToOne(() => Question, (question: Question) => question.options, { onDelete: 'CASCADE' })
+  @ManyToOne(() => Question, (question: Question) => question.options, {
+    onDelete: 'CASCADE',
+  })
   question: Question;
 }

@@ -1,4 +1,12 @@
-import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, ManyToOne, OneToOne, JoinColumn } from 'typeorm';
+import {
+  Entity,
+  PrimaryGeneratedColumn,
+  Column,
+  CreateDateColumn,
+  ManyToOne,
+  OneToOne,
+  JoinColumn,
+} from 'typeorm';
 import { User } from './user.entity';
 import { AiRecommendation } from './ai-recommendation.entity';
 
@@ -7,7 +15,7 @@ export class VocationalTest {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @ManyToOne(() => User, user => user.tests, { onDelete: 'CASCADE' })
+  @ManyToOne(() => User, (user) => user.tests, { onDelete: 'CASCADE' })
   user: User;
 
   @Column({ nullable: true })
@@ -22,7 +30,9 @@ export class VocationalTest {
   @Column()
   dominantTraits: string;
 
-  @OneToOne(() => AiRecommendation, (rec: AiRecommendation) => rec.test, { cascade: true })
+  @OneToOne(() => AiRecommendation, (rec: AiRecommendation) => rec.test, {
+    cascade: true,
+  })
   recommendation: AiRecommendation;
 
   @CreateDateColumn()

@@ -1,4 +1,12 @@
-import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, OneToMany, OneToOne } from 'typeorm';
+import {
+  Entity,
+  PrimaryGeneratedColumn,
+  Column,
+  CreateDateColumn,
+  UpdateDateColumn,
+  OneToMany,
+  OneToOne,
+} from 'typeorm';
 import { VocationalTest } from './vocational-test.entity';
 import { SavedUniversity } from './saved-university.entity';
 import { SavedCourse } from './saved-course.entity';
@@ -34,7 +42,7 @@ export class User {
   isEmailVerified: boolean;
 
   @Column({ nullable: true })
-  googleId?: string; 
+  googleId?: string;
 
   @Column({ default: 0 })
   failedLoginAttempts: number;
@@ -42,16 +50,16 @@ export class User {
   @Column({ type: 'timestamp', nullable: true })
   lockUntil?: Date | null;
 
-  @OneToOne(() => UserSettings, settings => settings.user, { cascade: true })
+  @OneToOne(() => UserSettings, (settings) => settings.user, { cascade: true })
   settings: UserSettings;
 
-  @OneToMany(() => VocationalTest, test => test.user)
+  @OneToMany(() => VocationalTest, (test) => test.user)
   tests: VocationalTest[];
 
-  @OneToMany(() => SavedUniversity, saved => saved.user)
+  @OneToMany(() => SavedUniversity, (saved) => saved.user)
   savedUniversities: SavedUniversity[];
 
-  @OneToMany(() => SavedCourse, saved => saved.user)
+  @OneToMany(() => SavedCourse, (saved) => saved.user)
   savedCourses: SavedCourse[];
 
   @CreateDateColumn()

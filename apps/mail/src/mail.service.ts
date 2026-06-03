@@ -11,7 +11,9 @@ export class MailService {
     const apiKey = this.configService.get<string>('BREVO_API_KEY');
 
     if (!apiKey) {
-      this.logger.error('CRITICAL: BREVO_API_KEY is not defined in environment variables');
+      this.logger.error(
+        'CRITICAL: BREVO_API_KEY is not defined in environment variables',
+      );
       return;
     }
 
@@ -20,11 +22,16 @@ export class MailService {
 
   async sendOtpEmail(email: string, code: string, purpose: string) {
     if (!this.apiInstance) {
-      this.logger.error('Cannot send email: Brevo API instance not initialized (missing API Key)');
+      this.logger.error(
+        'Cannot send email: Brevo API instance not initialized (missing API Key)',
+      );
       return;
     }
 
-    const frontendUrl = this.configService.get<string>('FRONTEND_URL', 'https://pwa-vocaciones-steam.vercel.app');
+    const frontendUrl = this.configService.get<string>(
+      'FRONTEND_URL',
+      'https://pwa-vocaciones-steam.vercel.app',
+    );
 
     let subject = '';
     let title = '';
@@ -135,10 +142,15 @@ export class MailService {
       const data = await this.apiInstance.transactionalEmails.sendTransacEmail({
         subject,
         htmlContent,
-        sender: { name: 'Vocaciones STEAM', email: 'vocaciones.steam0@gmail.com' },
+        sender: {
+          name: 'Vocaciones STEAM',
+          email: 'vocaciones.steam0@gmail.com',
+        },
         to: [{ email }],
       });
-      this.logger.log('Correo enviado satisfactoriamente: ' + JSON.stringify(data));
+      this.logger.log(
+        'Correo enviado satisfactoriamente: ' + JSON.stringify(data),
+      );
     } catch (error: any) {
       this.logger.error(`Falló el envío de correo a ${email}`, error);
       if (error.body) {
