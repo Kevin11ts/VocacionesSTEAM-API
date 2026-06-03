@@ -8,6 +8,13 @@ export * from './entities/option.entity';
 export * from './entities/saved-university.entity';
 export * from './entities/saved-course.entity';
 export * from './entities/ai-log.entity';
+export * from './entities/university.entity';
+export * from './entities/simulator.entity';
+export * from './entities/simulator-step.entity';
+export * from './entities/simulator-option.entity';
+export * from './entities/calibration-result.entity';
+export * from './entities/complementary-test.entity';
+export * from './entities/user-history.entity';
 export * from './database/database.module';
 export * from './config/config.module';
 

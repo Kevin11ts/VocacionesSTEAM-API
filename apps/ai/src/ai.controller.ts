@@ -30,4 +30,26 @@ export class AiController {
   async getLogsStats() {
     return this.aiService.getLogsStats();
   }
+
+  // --- Universities ---
+  @MessagePattern({ cmd: 'ai.get-universities' })
+  async getUniversities() {
+    return this.aiService.getUniversities();
+  }
+
+  @MessagePattern({ cmd: 'ai.create-university' })
+  async createUniversity(@Payload() data: any) {
+    return this.aiService.createUniversity(data);
+  }
+
+  @MessagePattern({ cmd: 'ai.update-university' })
+  async updateUniversity(@Payload() payload: { id: string; data: any }) {
+    return this.aiService.updateUniversity(payload.id, payload.data);
+  }
+
+  @MessagePattern({ cmd: 'ai.delete-university' })
+  async deleteUniversity(@Payload() payload: { id: string }) {
+    await this.aiService.deleteUniversity(payload.id);
+    return { success: true };
+  }
 }

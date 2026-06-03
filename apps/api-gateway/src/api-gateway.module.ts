@@ -9,6 +9,10 @@ import { TestsGatewayController } from './tests.controller';
 import { AiLogsGatewayController } from './ai-logs.controller';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { GoogleStrategy } from './strategies/google.strategy';
+import { UniversitiesController, AdminUniversitiesController } from './universities.controller';
+import { SimulatorsController, AdminSimulatorsController } from './simulators.controller';
+import { ComplementaryTestsController, AdminComplementaryTestsController } from './complementary-tests.controller';
+import { AdminStatsController } from './admin.controller';
 
 @Module({
   imports: [
@@ -55,7 +59,19 @@ import { GoogleStrategy } from './strategies/google.strategy';
       },
     ]),
   ],
-  controllers: [AuthGatewayController, UsersGatewayController, TestsGatewayController, AiLogsGatewayController],
+  controllers: [
+    AuthGatewayController, 
+    UsersGatewayController, 
+    TestsGatewayController, 
+    AiLogsGatewayController,
+    UniversitiesController,
+    AdminUniversitiesController,
+    SimulatorsController,
+    AdminSimulatorsController,
+    ComplementaryTestsController,
+    AdminComplementaryTestsController,
+    AdminStatsController
+  ],
   providers: [JwtStrategy, GoogleStrategy],
 })
 export class ApiGatewayModule {}

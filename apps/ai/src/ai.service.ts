@@ -4,7 +4,7 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 import Groq from 'groq-sdk';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { AiLog } from '@app/common';
+import { AiLog, University } from '@app/common';
 
 @Injectable()
 export class AiService {
@@ -16,6 +16,7 @@ export class AiService {
   constructor(
     private configService: ConfigService,
     @InjectRepository(AiLog) private readonly aiLogRepository: Repository<AiLog>,
+    @InjectRepository(University) private readonly universityRepository: Repository<University>,
   ) {
     this.geminiTests = new GoogleGenerativeAI(
       this.configService.get<string>('GEMINI_API_KEY_TESTS') || '',
@@ -275,5 +276,24 @@ Reglas críticas:
         status: log.success ? 'Éxito' : 'Error',
       })),
     };
+  }
+
+  // --- Universities CRUD ---
+  async getUniversities(): Promise<University[]> {
+    return this.universityRepository.find();
+  }
+
+  async createUniversity(data: Partial<University>): Promise<University> {
+    const university = this.universityRepository.create(data);
+    return this.universityRepository.save(university);
+  }
+
+  async updateUniversity(id: string, data: Partial<University>): Promise<University | null> {
+    await this.universityRepository.update(id, data);
+    return this.universityRepository.findOne({ where: { id } });
+  }
+
+  async deleteUniversity(id: string): Promise<void> {
+    await this.universityRepository.delete(id);
   }
 }
