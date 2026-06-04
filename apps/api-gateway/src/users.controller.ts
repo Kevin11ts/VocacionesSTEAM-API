@@ -67,6 +67,15 @@ export class UsersGatewayController {
 
   @Put('settings')
   @ApiOperation({ summary: 'Update user settings' })
+  @ApiBody({
+    schema: {
+      example: {
+        theme: 'dark',
+        notificationsEnabled: true,
+        language: 'es'
+      }
+    }
+  })
   async updateSettings(@CurrentUser() user: any, @Body() settings: any) {
     return lastValueFrom(
       this.usersClient.send(
@@ -184,6 +193,17 @@ export class UsersGatewayController {
   @Roles('admin')
   @ApiOperation({ summary: 'Actualizar un usuario (Admin)' })
   @ApiParam({ name: 'id', description: 'ID del usuario' })
+  @ApiBody({
+    schema: {
+      example: {
+        email: 'user@example.com',
+        firstName: 'John',
+        lastName: 'Doe',
+        role: 'user',
+        isActive: true
+      }
+    }
+  })
   async update(@Param('id') id: string, @Body() data: any) {
     return lastValueFrom(
       this.usersClient.send({ cmd: 'users.update' }, { id, data }),

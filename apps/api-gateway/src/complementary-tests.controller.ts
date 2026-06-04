@@ -14,6 +14,7 @@ import {
   ApiOperation,
   ApiResponse,
   ApiBearerAuth,
+  ApiBody,
 } from '@nestjs/swagger';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { RolesGuard } from './guards/roles.guard';
@@ -38,6 +39,18 @@ export class ComplementaryTestsController {
     );
   }
 
+  @ApiOperation({ summary: 'Submit answers for a complementary test' })
+  @ApiResponse({ status: 201, description: 'Test submitted successfully' })
+  @ApiBody({
+    schema: {
+      example: {
+        answers: {
+          q1: 'Option A',
+          q2: 'Option B'
+        }
+      }
+    }
+  })
   @Post(':testId/submit')
   @UseGuards(JwtAuthGuard)
   async submitComplementaryTest(
@@ -61,6 +74,17 @@ export class ComplementaryTestsController {
   @ApiResponse({
     status: 201,
     description: 'Calibration submitted successfully',
+  })
+  @ApiBody({
+    schema: {
+      example: {
+        moduleId: 'math-calibration-1',
+        answers: {
+          q1: 'Option A',
+          q2: 'Option C'
+        }
+      }
+    }
   })
   @Post('calibration')
   @UseGuards(JwtAuthGuard)
@@ -112,6 +136,25 @@ export class AdminComplementaryTestsController {
     @Inject('TESTS_SERVICE') private readonly testsClient: ClientProxy,
   ) {}
 
+  @ApiOperation({ summary: 'Create a new complementary test (Admin only)' })
+  @ApiResponse({ status: 201, description: 'Test created successfully' })
+  @ApiBody({
+    schema: {
+      example: {
+        name: 'Mathematical Aptitude Test',
+        description: 'Assesses basic to advanced mathematical skills.',
+        type: 'aptitude',
+        questions: [
+          {
+            id: 'q1',
+            text: 'What is 2 + 2?',
+            options: ['3', '4', '5'],
+            correctAnswer: '4'
+          }
+        ]
+      }
+    }
+  })
   @Post()
   async createComplementaryTest(@Body() data: any) {
     return lastValueFrom(

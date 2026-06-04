@@ -15,6 +15,7 @@ import {
   ApiOperation,
   ApiResponse,
   ApiBearerAuth,
+  ApiBody,
 } from '@nestjs/swagger';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { RolesGuard } from './guards/roles.guard';
@@ -54,6 +55,37 @@ export class CareerSimulatorsController {
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('admin')
+  @ApiBody({
+    schema: {
+      example: {
+        slug: 'software-engineering-simulator',
+        careerName: 'Software Engineering',
+        steamArea: 'Technology',
+        estimatedDurationMinutes: 15,
+        difficulty: 'Medium',
+        status: 'activo',
+        colorToken: 'primary',
+        icon: 'code',
+        shortDescription: 'Experience a day in the life of a software engineer.',
+        tags: ['coding', 'problem-solving', 'technology'],
+        steps: [
+          {
+            id: 'step_1',
+            type: 'decision',
+            question: 'What language will you use?',
+            options: [
+              { id: 'opt_1', text: 'Python', nextStepId: 'step_2' },
+              { id: 'opt_2', text: 'JavaScript', nextStepId: 'step_2' }
+            ]
+          }
+        ],
+        completionConfig: {
+          badge: 'Junior Developer',
+          score: 100
+        }
+      }
+    }
+  })
   @Post()
   async createSimulator(@Body() data: any) {
     return lastValueFrom(
@@ -66,6 +98,15 @@ export class CareerSimulatorsController {
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('admin')
+  @ApiBody({
+    schema: {
+      example: {
+        careerName: 'Software Engineering Updated',
+        estimatedDurationMinutes: 20,
+        status: 'inactivo'
+      }
+    }
+  })
   @Put(':id')
   async updateSimulator(@Param('id') id: string, @Body() data: any) {
     return lastValueFrom(
