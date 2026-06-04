@@ -13,10 +13,7 @@ import {
   UniversitiesController,
   AdminUniversitiesController,
 } from './universities.controller';
-import {
-  SimulatorsController,
-  AdminSimulatorsController,
-} from './simulators.controller';
+import { CareerSimulatorsController } from './career-simulators.controller';
 import {
   ComplementaryTestsController,
   AdminComplementaryTestsController,
@@ -87,8 +84,7 @@ import { AdminStatsController } from './admin.controller';
     AiLogsGatewayController,
     UniversitiesController,
     AdminUniversitiesController,
-    SimulatorsController,
-    AdminSimulatorsController,
+    CareerSimulatorsController,
     ComplementaryTestsController,
     AdminComplementaryTestsController,
     AdminStatsController,

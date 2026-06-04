@@ -8,7 +8,6 @@ import {
   Body,
   UseGuards,
   Inject,
-  Request,
 } from '@nestjs/common';
 import { ClientProxy } from '@nestjs/microservices';
 import {
@@ -22,13 +21,27 @@ import { RolesGuard } from './guards/roles.guard';
 import { Roles } from './decorators/roles.decorator';
 import { lastValueFrom } from 'rxjs';
 
-@ApiTags('Simulators')
-@Controller('simulators')
-export class SimulatorsController {
+@ApiTags('Career Simulators')
+@Controller('career-simulators')
+export class CareerSimulatorsController {
   constructor(
     @Inject('TESTS_SERVICE') private readonly testsClient: ClientProxy,
   ) {}
 
+  @ApiOperation({ summary: 'Get simulator by slug (publicly cacheable)' })
+  @ApiResponse({ status: 200, description: 'Returns the simulator data without AI evaluation logic' })
+  @Get(':slug')
+  async getSimulatorBySlug(@Param('slug') slug: string) {
+    return lastValueFrom(
+      this.testsClient.send({ cmd: 'tests.get-simulator-by-slug' }, { slug }),
+    );
+  }
+
+  @ApiOperation({ summary: 'Get all career simulators (Admin only)' })
+  @ApiResponse({ status: 200, description: 'Returns list of simulators' })
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('admin')
   @Get()
   async getSimulators() {
     return lastValueFrom(
@@ -36,57 +49,11 @@ export class SimulatorsController {
     );
   }
 
-  @Get(':id')
-  async getSimulatorById(@Param('id') id: string) {
-    return lastValueFrom(
-      this.testsClient.send({ cmd: 'tests.get-simulator-by-id' }, { id }),
-    );
-  }
-
-  @ApiOperation({ summary: 'Submit simulator answers and get static feedback' })
-  @ApiResponse({ status: 201, description: 'Simulator evaluated successfully' })
-  @ApiBearerAuth()
-  @Post(':id/submit')
-  @UseGuards(JwtAuthGuard)
-  async submitSimulator(
-    @Param('id') simulatorId: string,
-    @Body() data: any,
-    @Request() req: any,
-  ) {
-    return lastValueFrom(
-      this.testsClient.send(
-        { cmd: 'tests.evaluate-simulator' },
-        {
-          userId: req.user.userId,
-          simulatorId,
-          decisions: data.decisions,
-        },
-      ),
-    );
-  }
-}
-
-@ApiTags('Admin Simulators')
-@ApiBearerAuth()
-@Controller('admin/simulators')
-@UseGuards(JwtAuthGuard, RolesGuard)
-@Roles('admin')
-export class AdminSimulatorsController {
-  constructor(
-    @Inject('TESTS_SERVICE') private readonly testsClient: ClientProxy,
-  ) {}
-
-  @ApiOperation({ summary: 'Get all simulators for admin' })
-  @ApiResponse({ status: 200, description: 'Returns list of simulators' })
-  @Get()
-  async getAdminSimulators() {
-    return lastValueFrom(
-      this.testsClient.send({ cmd: 'tests.get-simulators' }, {}),
-    );
-  }
-
-  @ApiOperation({ summary: 'Create a new simulator with exactly 6 steps' })
+  @ApiOperation({ summary: 'Create a new career simulator (Admin only)' })
   @ApiResponse({ status: 201, description: 'Simulator created successfully' })
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('admin')
   @Post()
   async createSimulator(@Body() data: any) {
     return lastValueFrom(
@@ -94,8 +61,11 @@ export class AdminSimulatorsController {
     );
   }
 
-  @ApiOperation({ summary: 'Update an existing simulator' })
+  @ApiOperation({ summary: 'Update an existing career simulator (Admin only)' })
   @ApiResponse({ status: 200, description: 'Simulator updated successfully' })
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('admin')
   @Put(':id')
   async updateSimulator(@Param('id') id: string, @Body() data: any) {
     return lastValueFrom(
@@ -103,8 +73,11 @@ export class AdminSimulatorsController {
     );
   }
 
-  @ApiOperation({ summary: 'Delete a simulator' })
+  @ApiOperation({ summary: 'Delete a career simulator (Admin only)' })
   @ApiResponse({ status: 200, description: 'Simulator deleted successfully' })
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('admin')
   @Delete(':id')
   async deleteSimulator(@Param('id') id: string) {
     return lastValueFrom(

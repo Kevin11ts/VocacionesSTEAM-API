@@ -81,15 +81,15 @@ export class TestsController {
     return this.testsService.deleteTestFromHistory(payload.id, payload.userId);
   }
 
-  // --- Simulators ---
+  // --- Career Simulators ---
   @MessagePattern({ cmd: 'tests.get-simulators' })
   async getSimulators() {
     return this.testsService.getSimulators();
   }
 
-  @MessagePattern({ cmd: 'tests.get-simulator-by-id' })
-  async getSimulatorById(@Payload() payload: { id: string }) {
-    return this.testsService.getSimulatorById(payload.id);
+  @MessagePattern({ cmd: 'tests.get-simulator-by-slug' })
+  async getSimulatorBySlug(@Payload() payload: { slug: string }) {
+    return this.testsService.getSimulatorBySlug(payload.slug);
   }
 
   @MessagePattern({ cmd: 'tests.create-simulator' })
@@ -105,22 +105,6 @@ export class TestsController {
   @MessagePattern({ cmd: 'tests.delete-simulator' })
   async deleteSimulator(@Payload() payload: { id: string }) {
     return this.testsService.deleteSimulator(payload.id);
-  }
-
-  @MessagePattern({ cmd: 'tests.evaluate-simulator' })
-  async evaluateSimulator(
-    @Payload()
-    payload: {
-      userId: string;
-      simulatorId: string;
-      decisions: any[];
-    },
-  ) {
-    return this.testsService.evaluateSimulator(
-      payload.userId,
-      payload.simulatorId,
-      payload.decisions,
-    );
   }
 
   // --- Complementary Tests ---

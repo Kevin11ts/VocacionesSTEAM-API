@@ -10,9 +10,7 @@ import {
   UserSettings,
   OtpCode,
   CreateQuestionDto,
-  Simulator,
-  SimulatorStep,
-  SimulatorOption,
+  CareerSimulator,
   ComplementaryTest,
   UserHistory,
   CalibrationResult,
@@ -32,12 +30,8 @@ export class TestsService {
     private readonly questionRepository: Repository<Question>,
     @InjectRepository(Option)
     private readonly optionRepository: Repository<Option>,
-    @InjectRepository(Simulator)
-    private readonly simulatorRepository: Repository<Simulator>,
-    @InjectRepository(SimulatorStep)
-    private readonly simulatorStepRepository: Repository<SimulatorStep>,
-    @InjectRepository(SimulatorOption)
-    private readonly simulatorOptionRepository: Repository<SimulatorOption>,
+    @InjectRepository(CareerSimulator)
+    private readonly careerSimulatorRepository: Repository<CareerSimulator>,
     @InjectRepository(ComplementaryTest)
     private readonly compTestRepository: Repository<ComplementaryTest>,
     @InjectRepository(UserHistory)
@@ -306,142 +300,44 @@ export class TestsService {
     return `${cap(top1[0])} + ${cap(top2[0])}`;
   }
 
-  // --- Simulators ---
+  // --- Career Simulators ---
   async getSimulators() {
-    return this.simulatorRepository.find({
-      select: ['id', 'careerId', 'careerName', 'steamAreaName', 'description'],
+    return this.careerSimulatorRepository.find({
+      select: ['id', 'slug', 'careerName', 'steamArea', 'difficulty', 'status', 'shortDescription', 'tags'],
     });
   }
 
-  async getSimulatorById(id: string) {
-    const simulator = await this.simulatorRepository.findOne({ where: { id } });
+  async getSimulatorBySlug(slug: string) {
+    const simulator = await this.careerSimulatorRepository.findOne({ where: { slug } });
     if (!simulator) throw new RpcException('Simulator not found');
-    return simulator; // Returns steps and feedbackRules
+    return simulator;
   }
 
-  async createSimulator(data: Partial<Simulator>) {
+  async createSimulator(data: Partial<CareerSimulator>) {
     if (data.steps && data.steps.length !== 6) {
       throw new RpcException('Un simulador debe tener exactamente 6 pasos.');
     }
-    const sim = this.simulatorRepository.create(data);
-    return this.simulatorRepository.save(sim);
+    const sim = this.careerSimulatorRepository.create(data);
+    return this.careerSimulatorRepository.save(sim);
   }
 
-  async updateSimulator(id: string, data: Partial<Simulator>) {
-    const simulator = await this.simulatorRepository.findOne({ where: { id } });
+  async updateSimulator(id: string, data: Partial<CareerSimulator>) {
+    const simulator = await this.careerSimulatorRepository.findOne({ where: { id } });
     if (!simulator) throw new RpcException('Simulator not found');
 
     if (data.steps && data.steps.length !== 6) {
       throw new RpcException('Un simulador debe tener exactamente 6 pasos.');
     }
 
-    // Usando save para manejar las relaciones (cascade: true)
     Object.assign(simulator, data);
-    return this.simulatorRepository.save(simulator);
+    return this.careerSimulatorRepository.save(simulator);
   }
 
   async deleteSimulator(id: string) {
-    const simulator = await this.simulatorRepository.findOne({ where: { id } });
+    const simulator = await this.careerSimulatorRepository.findOne({ where: { id } });
     if (!simulator) throw new RpcException('Simulator not found');
-    await this.simulatorRepository.remove(simulator);
+    await this.careerSimulatorRepository.remove(simulator);
     return { success: true, message: 'Simulator deleted' };
-  }
-
-  async evaluateSimulator(
-    userId: string,
-    simulatorId: string,
-    decisions: any[],
-  ) {
-    const simulator = await this.simulatorRepository.findOne({
-      where: { id: simulatorId },
-    }); // eager loads steps and options
-    if (!simulator) throw new RpcException('Simulator not found');
-
-    const user = await this.userRepository.findOne({ where: { id: userId } });
-    if (!user) throw new RpcException('User not found');
-
-    // 1. Sumar los steamTraitWeight de las opciones elegidas.
-    const aggregatedScores: Record<string, number> = {
-      ciencia: 0,
-      tecnologia: 0,
-      ingenieria: 0,
-      arte: 0,
-      matematicas: 0,
-    };
-
-    const selectedOptionIds = decisions.map((d) => d.selectedOptionId);
-    const totalPossibleScore = 0; // Para calcular afinidad máxima posible si se requiere
-
-    // Asumiendo que `steps` y `options` son cargadas mediante Eager loading o Relation
-    if (simulator.steps) {
-      for (const step of simulator.steps) {
-        if (step.options) {
-          for (const opt of step.options) {
-            if (
-              selectedOptionIds.includes(opt.optionId) &&
-              opt.steamTraitWeight
-            ) {
-              // Sumar los pesos
-              for (const [trait, weight] of Object.entries(
-                opt.steamTraitWeight,
-              )) {
-                if (typeof weight === 'number') {
-                  aggregatedScores[trait.toLowerCase()] =
-                    (aggregatedScores[trait.toLowerCase()] || 0) + weight;
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-
-    // 2. Calcular una puntuación de afinidad. (Lógica simplificada: suma total de puntos)
-    const affinityScore = Object.values(aggregatedScores).reduce(
-      (a, b) => a + b,
-      0,
-    );
-
-    // 3. Devolver textos predefinidos almacenados en la base de datos basados en el puntaje
-    let matchedRule = null;
-    if (simulator.feedbackRules && simulator.feedbackRules.length > 0) {
-      // Ordenar reglas por puntaje mínimo requerido descendente para encontrar la más alta que cumple
-      const sortedRules = [...simulator.feedbackRules].sort(
-        (a, b) => (b.minScore || 0) - (a.minScore || 0),
-      );
-      for (const rule of sortedRules) {
-        if (affinityScore >= (rule.minScore || 0)) {
-          matchedRule = rule;
-          break;
-        }
-      }
-    }
-
-    if (!matchedRule && simulator.feedbackRules?.length > 0) {
-      matchedRule = simulator.feedbackRules[simulator.feedbackRules.length - 1]; // Fallback
-    }
-
-    const result = {
-      feedbackMessage:
-        matchedRule?.feedbackMessage ||
-        'Completaste el simulador satisfactoriamente.',
-      strengths: matchedRule?.strengths || [],
-      areasForImprovement: matchedRule?.areasForImprovement || [],
-      affinityScore: affinityScore,
-      aggregatedScores: aggregatedScores, // Puntajes desglosados
-    };
-
-    // Save to UserHistory
-    const history = this.userHistoryRepository.create({
-      user,
-      userId,
-      activityType: 'SIMULATOR',
-      activityId: simulatorId,
-      results: result,
-    });
-    await this.userHistoryRepository.save(history);
-
-    return result;
   }
 
   // --- Complementary Tests ---
