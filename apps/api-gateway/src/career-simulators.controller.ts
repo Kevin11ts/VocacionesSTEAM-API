@@ -38,11 +38,8 @@ export class CareerSimulatorsController {
     );
   }
 
-  @ApiOperation({ summary: 'Get all career simulators (Admin only)' })
+  @ApiOperation({ summary: 'Get all career simulators (Public)' })
   @ApiResponse({ status: 200, description: 'Returns list of simulators' })
-  @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles('admin')
   @Get()
   async getSimulators() {
     return lastValueFrom(
