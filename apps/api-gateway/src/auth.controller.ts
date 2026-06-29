@@ -23,6 +23,7 @@ import { lastValueFrom } from 'rxjs';
 import { AuthGuard } from '@nestjs/passport';
 import { ConfigService } from '@nestjs/config';
 import type { Request, Response } from 'express';
+import { JwtRefreshGuard } from './guards/jwt-refresh.guard';
 
 @ApiTags('auth')
 @Controller('auth')
@@ -127,5 +128,19 @@ export class AuthGatewayController {
     );
 
     return res.redirect(`${frontendUrl}?token=${oauthRes.accessToken}`);
+  }
+
+  @Post('refresh')
+  @UseGuards(JwtRefreshGuard)
+  @ApiOperation({ summary: 'Refresh tokens using a valid refresh token' })
+  @ApiResponse({ status: 200, description: 'Tokens refreshed successfully.' })
+  @ApiBody({ schema: { type: 'object', properties: { refreshToken: { type: 'string' } } } })
+  async refresh(@Req() req: any) {
+    return lastValueFrom(
+      this.authClient.send({ cmd: 'auth.refresh' }, {
+        userId: req.user.id,
+        refreshToken: req.user.refreshToken,
+      })
+    );
   }
 }

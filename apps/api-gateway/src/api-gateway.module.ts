@@ -8,6 +8,7 @@ import { UsersGatewayController } from './users.controller';
 import { TestsGatewayController } from './tests.controller';
 import { AiLogsGatewayController } from './ai-logs.controller';
 import { JwtStrategy } from './strategies/jwt.strategy';
+import { JwtRefreshStrategy } from './strategies/jwt-refresh.strategy';
 import { GoogleStrategy } from './strategies/google.strategy';
 import {
   UniversitiesController,
@@ -19,6 +20,8 @@ import {
   AdminComplementaryTestsController,
 } from './complementary-tests.controller';
 import { AdminStatsController } from './admin.controller';
+import { RolesGuard } from './guards/roles.guard';
+import { CareersController } from './careers.controller';
 
 @Module({
   imports: [
@@ -27,7 +30,7 @@ import { AdminStatsController } from './admin.controller';
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({
         secret: config.get<string>('JWT_SECRET'),
-        signOptions: { expiresIn: '1d' },
+        signOptions: { expiresIn: '15m' },
       }),
     }),
     ClientsModule.registerAsync([
@@ -88,7 +91,8 @@ import { AdminStatsController } from './admin.controller';
     ComplementaryTestsController,
     AdminComplementaryTestsController,
     AdminStatsController,
+    CareersController,
   ],
-  providers: [JwtStrategy, GoogleStrategy],
+  providers: [JwtStrategy, JwtRefreshStrategy, GoogleStrategy, RolesGuard],
 })
 export class ApiGatewayModule {}

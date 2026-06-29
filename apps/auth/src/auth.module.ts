@@ -32,7 +32,7 @@ import { ClientsModule, Transport } from '@nestjs/microservices';
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({
         secret: config.get<string>('JWT_SECRET'),
-        signOptions: { expiresIn: '1d' },
+        signOptions: { expiresIn: '15m' },
       }),
     }),
     ClientsModule.registerAsync([

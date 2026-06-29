@@ -91,12 +91,8 @@ export class AuthService {
     }
 
     const { password: _, ...safeUser } = user;
-    const token = this.jwtService.sign({
-      sub: user.id,
-      email: user.email,
-      role: user.role,
-    });
-    return { accessToken: token, user: safeUser };
+    const tokens = await this.generateTokens(user);
+    return { ...tokens, user: safeUser };
   }
 
   async login(data: LoginDto) {
@@ -264,11 +260,41 @@ export class AuthService {
     }
 
     const { password: _, ...safeUser } = user;
-    const token = this.jwtService.sign({
+    const tokens = await this.generateTokens(user);
+    return { ...tokens, user: safeUser };
+  }
+
+  async generateTokens(user: User) {
+    const accessToken = this.jwtService.sign({
       sub: user.id,
       email: user.email,
       role: user.role,
     });
-    return { accessToken: token, user: safeUser };
+
+    const refreshToken = this.jwtService.sign(
+      { sub: user.id },
+      { expiresIn: '7d' }
+    );
+
+    user.hashedRefreshToken = await bcrypt.hash(refreshToken, 10);
+    await this.userRepository.save(user);
+
+    return { accessToken, refreshToken };
+  }
+
+  async refreshTokens(userId: string, refreshToken: string) {
+    const user = await this.userRepository.findOne({ where: { id: userId }, relations: ['settings'] });
+    if (!user || !user.hashedRefreshToken) {
+      throw new RpcException('Acceso denegado');
+    }
+
+    const isMatch = await bcrypt.compare(refreshToken, user.hashedRefreshToken);
+    if (!isMatch) {
+      throw new RpcException('Acceso denegado');
+    }
+
+    const tokens = await this.generateTokens(user);
+    const { password: _, ...safeUser } = user;
+    return { ...tokens, user: safeUser };
   }
 }

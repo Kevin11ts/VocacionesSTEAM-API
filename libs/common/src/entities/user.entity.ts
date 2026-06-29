@@ -50,6 +50,9 @@ export class User {
   @Column({ type: 'timestamp', nullable: true })
   lockUntil?: Date | null;
 
+  @Column({ nullable: true })
+  hashedRefreshToken?: string;
+
   @OneToOne(() => UserSettings, (settings) => settings.user, { cascade: true })
   settings: UserSettings;
 

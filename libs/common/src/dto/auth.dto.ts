@@ -140,11 +140,11 @@ export class ResetPasswordDto {
 }
 
 export class LoginResponseDto {
-  @ApiProperty({
-    example: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
-    description: 'Token de acceso JWT',
-  })
+  @ApiProperty({ description: 'JWT Access Token' })
   accessToken: string;
+
+  @ApiProperty({ description: 'JWT Refresh Token' })
+  refreshToken?: string;
 
   @ApiProperty({
     description: 'Datos del usuario autenticado',

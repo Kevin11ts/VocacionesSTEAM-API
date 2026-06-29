@@ -50,4 +50,9 @@ export class AuthController {
   async resetPassword(@Payload() payload: ResetPasswordDto) {
     return this.authService.resetPassword(payload);
   }
+
+  @MessagePattern({ cmd: 'auth.refresh' })
+  async refreshTokens(@Payload() payload: { userId: string; refreshToken: string }) {
+    return this.authService.refreshTokens(payload.userId, payload.refreshToken);
+  }
 }

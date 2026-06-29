@@ -54,6 +54,7 @@ async function bootstrap() {
     .map((o) => o.trim());
   app.enableCors({
     origin: corsOrigins.length === 1 ? corsOrigins[0] : corsOrigins,
+    credentials: true,
   });
 
   app.useGlobalFilters(new RpcToHttpExceptionFilter());
