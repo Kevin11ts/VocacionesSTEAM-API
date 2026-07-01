@@ -21,6 +21,8 @@ export * from './config/config.module';
 
 export * from './types/vocational-profile.types';
 export * from './types/career-simulator.types';
+export * from './types/university-match.types';
+export * from './entities/university-match-cache.entity';
 
 export * from './dto/auth.dto';
 export * from './dto/test.dto';

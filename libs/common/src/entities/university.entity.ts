@@ -5,6 +5,7 @@ import {
   CreateDateColumn,
   UpdateDateColumn,
 } from 'typeorm';
+import { CostTier } from '../types/university-match.types';
 
 @Entity('universities')
 export class University {
@@ -25,6 +26,22 @@ export class University {
 
   @Column('jsonb', { nullable: true })
   steamPrograms: { name: string; area: string }[];
+
+  /** Dato duro para A8: public | affordable | private-premium. */
+  @Column({ nullable: true })
+  costTier: CostTier;
+
+  /** Rango de colegiatura legible (contexto para la IA, no se inventa). */
+  @Column({ nullable: true })
+  tuitionRange: string;
+
+  /** Rating de Google Maps (0-5), administrado en BD. */
+  @Column('float', { nullable: true })
+  rating: number;
+
+  /** presencial | en línea | híbrida. */
+  @Column({ nullable: true })
+  modality: string;
 
   @CreateDateColumn()
   createdAt: Date;
