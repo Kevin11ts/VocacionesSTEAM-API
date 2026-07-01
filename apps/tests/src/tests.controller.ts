@@ -29,6 +29,43 @@ export class TestsController {
     return this.profileService.computeProfile(payload.userId, payload.request);
   }
 
+  @MessagePattern({ cmd: 'tests.submit-calibration-recompute' })
+  async submitCalibrationAndRecompute(
+    @Payload()
+    payload: {
+      userId: string;
+      moduleId: string;
+      answers: Array<{ axis: SteamAxis; liked: boolean }>;
+    },
+  ) {
+    return this.profileService.submitCalibrationAndRecompute(
+      payload.userId,
+      payload.moduleId,
+      payload.answers,
+    );
+  }
+
+  @MessagePattern({ cmd: 'tests.submit-simulator' })
+  async submitSimulatorAndRecompute(
+    @Payload()
+    payload: {
+      userId: string;
+      careerSlug: string;
+      decisions: any[];
+      biasFlags?: {
+        too_fast: boolean;
+        linear_pattern_detected: boolean;
+      };
+    },
+  ) {
+    return this.profileService.submitSimulatorAndRecompute(
+      payload.userId,
+      payload.careerSlug,
+      payload.decisions,
+      payload.biasFlags,
+    );
+  }
+
   @MessagePattern({ cmd: 'tests.get-questions' })
   async getQuestions() {
     return this.testsService.getQuestions();

@@ -20,6 +20,7 @@ export * from './database/database.module';
 export * from './config/config.module';
 
 export * from './types/vocational-profile.types';
+export * from './types/career-simulator.types';
 
 export * from './dto/auth.dto';
 export * from './dto/test.dto';

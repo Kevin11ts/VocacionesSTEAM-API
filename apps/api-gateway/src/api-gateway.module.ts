@@ -25,7 +25,11 @@ import {
   CareersController,
   AdminCareersCatalogController,
 } from './careers.controller';
-import { ProfileGatewayController } from './profile.controller';
+import {
+  ProfileGatewayController,
+  CalibrationGatewayController,
+  SimulatorGatewayController,
+} from './profile.controller';
 
 @Module({
   imports: [
@@ -98,6 +102,8 @@ import { ProfileGatewayController } from './profile.controller';
     CareersController,
     AdminCareersCatalogController,
     ProfileGatewayController,
+    CalibrationGatewayController,
+    SimulatorGatewayController,
   ],
   providers: [JwtStrategy, JwtRefreshStrategy, GoogleStrategy, RolesGuard],
 })

@@ -2,10 +2,15 @@ import {
   SteamAxis,
   SteamVector,
   CalibrationState,
+  CalibrationModuleResult,
   CareerRecommendation,
   ConfidenceLevel,
   NextStep,
   ProfileStrength,
+  SimulatorAffinityResult,
+  SimulatorBiasFlags,
+  SimulatorDecisionInput,
+  SimulatorFeedbackResponse,
   VocationRecommendation,
   CALIBRATION_GAINS,
   SOURCE_WEIGHTS,
@@ -106,6 +111,354 @@ export function computeTheoreticalVector(
     vector[axis] = Math.round(((raw[axis] || 0) / max) * 100);
   }
   return vector;
+}
+
+// ===========================================================================
+//  A2 — Vector de calibración (swipes)
+// ===========================================================================
+
+export const CALIBRACION_LIKE = 15;
+export const CALIBRACION_DISLIKE = 8;
+export const CALIBRACION_NEUTRAL = 50;
+
+/**
+ * Convierte los likes/dislikes de los módulos en un vector PARCIAL:
+ * clamp(50 + likes*15 - dislikes*8) por eje con señal. Los ejes sin
+ * ninguna carta se OMITEN, no se ponen en 0 ni 50 (RG-9).
+ */
+export function computeCalibrationVector(
+  results: CalibrationModuleResult[],
+): Partial<SteamVector> | null {
+  if (!results?.length) return null;
+  const counts: Record<SteamAxis, { liked: number; disliked: number }> = {
+    ciencia: { liked: 0, disliked: 0 },
+    tecnologia: { liked: 0, disliked: 0 },
+    ingenieria: { liked: 0, disliked: 0 },
+    artes: { liked: 0, disliked: 0 },
+    matematicas: { liked: 0, disliked: 0 },
+  };
+  for (const mod of results) {
+    for (const ans of mod.answers || []) {
+      const axis = normalizeAxisKey(ans.axis);
+      if (!axis) continue;
+      if (ans.liked) counts[axis].liked++;
+      else counts[axis].disliked++;
+    }
+  }
+  const vector: Partial<SteamVector> = {};
+  for (const axis of AXES) {
+    const c = counts[axis];
+    if (c.liked === 0 && c.disliked === 0) continue; // sin señal: se omite
+    vector[axis] = clamp(
+      CALIBRACION_NEUTRAL +
+        c.liked * CALIBRACION_LIKE -
+        c.disliked * CALIBRACION_DISLIKE,
+    );
+  }
+  return Object.keys(vector).length ? vector : null;
+}
+
+// ===========================================================================
+//  A3a — Afinidad de UN simulador (baño de realidad)
+// ===========================================================================
+
+export const SIM_TIME_CAP_SEG = 20;
+export const SIM_BIAS_LINEAL = 15;
+export const SIM_BIAS_RAPIDO = 10;
+export const SIM_BASE_SIN_DATOS = 60;
+
+/** Mapeo de área corta S/T/E/A/M al eje canónico. */
+const AXIS_MAP: Record<string, SteamAxis> = {
+  S: 'ciencia',
+  T: 'tecnologia',
+  E: 'ingenieria',
+  A: 'artes',
+  M: 'matematicas',
+};
+
+/** Forma mínima de los pasos del simulador que consume A3a. */
+export interface SimulatorStepForScoring {
+  id: string;
+  type?: string;
+  options?: Array<{
+    id: string;
+    steamArea?: string;
+    steamTraitWeight?: Record<string, number>;
+  }> | null;
+}
+
+/** Eje principal de la carrera a partir del nombre de área STEAM. */
+export function axisFromAreaName(steamAreaName: string): SteamAxis {
+  const area = (steamAreaName || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+  if (area.includes('ciencia')) return 'ciencia';
+  if (area.includes('tecnologia')) return 'tecnologia';
+  if (area.includes('ingenieria')) return 'ingenieria';
+  if (area.includes('arte')) return 'artes';
+  if (area.includes('matematica')) return 'matematicas';
+  return 'tecnologia';
+}
+
+/**
+ * Deriva las banderas de sesgo desde las decisiones crudas cuando el
+ * cliente no las envía. Réplica de la detección del frontend:
+ * - too_fast: algún paso respondido en menos de 3 segundos.
+ * - linear_pattern: en pasos DATA_ANALYSIS/TRADEOFF_DECISION con opción
+ *   elegida (mínimo 3), el mismo índice de opción se repite ≥70%.
+ */
+export function deriveBiasFlags(
+  decisions: SimulatorDecisionInput[],
+  steps: SimulatorStepForScoring[],
+): SimulatorBiasFlags {
+  const too_fast = decisions.some(
+    (d) => Math.round(d.timeSpentMs / 1000) < 3,
+  );
+
+  const applicable = decisions.filter(
+    (d) =>
+      (d.stepType === 'DATA_ANALYSIS' || d.stepType === 'TRADEOFF_DECISION') &&
+      d.selectedOptionId,
+  );
+  let linear_pattern_detected = false;
+  if (applicable.length >= 3) {
+    const stepById = new Map(steps.map((s) => [s.id, s]));
+    const optionIndices = applicable
+      .map((d) => {
+        const step = stepById.get(d.stepId);
+        if (!step?.options) return -1;
+        return step.options.findIndex((o) => o.id === d.selectedOptionId);
+      })
+      .filter((idx) => idx !== -1);
+    if (optionIndices.length >= 3) {
+      const indexCounts = new Map<number, number>();
+      let maxCount = 0;
+      for (const idx of optionIndices) {
+        const count = (indexCounts.get(idx) || 0) + 1;
+        indexCounts.set(idx, count);
+        if (count > maxCount) maxCount = count;
+      }
+      linear_pattern_detected = maxCount / optionIndices.length >= 0.7;
+    }
+  }
+  return { too_fast, linear_pattern_detected };
+}
+
+export interface SimulatorAffinityInput {
+  careerSlug: string;
+  careerName: string;
+  /** Nombre del área STEAM de la carrera (define el eje principal). */
+  steamAreaName: string;
+  steps: SimulatorStepForScoring[];
+  decisions: SimulatorDecisionInput[];
+  biasFlags: SimulatorBiasFlags;
+}
+
+export interface SimulatorAffinityOutput {
+  result: SimulatorAffinityResult;
+  feedback: SimulatorFeedbackResponse;
+}
+
+/**
+ * A3a: acumula el steamTraitWeight de cada opción elegida (o +10 al eje
+ * de steamArea si no trae pesos), normaliza relativo al máximo, y aplica:
+ *
+ *   affinity = clamp_10_100( round( primary * (0.7 + 0.3*timeFactor)
+ *                                   - biasDeduction - speedDeduction ) )
+ */
+export function computeSimulatorAffinity(
+  input: SimulatorAffinityInput,
+): SimulatorAffinityOutput {
+  const { steps, decisions, biasFlags } = input;
+
+  const steamAccum: Record<SteamAxis, number> = {
+    ciencia: 0,
+    tecnologia: 0,
+    ingenieria: 0,
+    artes: 0,
+    matematicas: 0,
+  };
+  let scoredDecisions = 0;
+
+  const stepById = new Map(steps.map((s) => [s.id, s]));
+  for (const decision of decisions) {
+    if (!decision.selectedOptionId) continue;
+    const step = stepById.get(decision.stepId);
+    if (!step?.options) continue;
+    const option = step.options.find((o) => o.id === decision.selectedOptionId);
+    if (!option) continue;
+
+    if (option.steamTraitWeight) {
+      for (const [axisKey, weight] of Object.entries(option.steamTraitWeight)) {
+        const axis = normalizeAxisKey(axisKey);
+        if (axis) steamAccum[axis] += weight;
+      }
+      scoredDecisions++;
+    } else if (option.steamArea && AXIS_MAP[option.steamArea]) {
+      steamAccum[AXIS_MAP[option.steamArea]] += 10;
+      scoredDecisions++;
+    }
+  }
+
+  // Normalizar a 0-100 relativo al eje con mayor acumulación
+  const maxVal = Math.max(...Object.values(steamAccum), 1);
+  const steamScores: Record<SteamAxis, number> = { ...steamAccum };
+  for (const axis of AXES) {
+    steamScores[axis] = Math.round((steamAccum[axis] / maxVal) * 100);
+  }
+
+  const primaryAxis = axisFromAreaName(input.steamAreaName);
+  const primaryScore =
+    scoredDecisions > 0
+      ? (steamScores[primaryAxis] ?? SIM_BASE_SIN_DATOS)
+      : SIM_BASE_SIN_DATOS;
+
+  const avgTimeSec =
+    decisions.length > 0
+      ? decisions.reduce((sum, d) => sum + d.timeSpentMs, 0) /
+        decisions.length /
+        1000
+      : 0;
+
+  const timeFactor = Math.min(1, avgTimeSec / SIM_TIME_CAP_SEG);
+  const biasDeduction = biasFlags.linear_pattern_detected ? SIM_BIAS_LINEAL : 0;
+  const speedDeduction = biasFlags.too_fast ? SIM_BIAS_RAPIDO : 0;
+  const affinityScore = Math.max(
+    10,
+    Math.min(
+      100,
+      Math.round(
+        primaryScore * (0.7 + 0.3 * timeFactor) - biasDeduction - speedDeduction,
+      ),
+    ),
+  );
+
+  const confidenceLevel: 'high' | 'medium' | 'low' =
+    biasFlags.too_fast && biasFlags.linear_pattern_detected
+      ? 'low'
+      : biasFlags.too_fast || biasFlags.linear_pattern_detected
+        ? 'medium'
+        : 'high';
+
+  return {
+    result: {
+      careerSlug: input.careerSlug,
+      axis: primaryAxis,
+      affinity: affinityScore,
+      biasFlags: { ...biasFlags },
+    },
+    feedback: buildSimulatorFeedback(
+      input.careerName,
+      input.steamAreaName,
+      steamScores,
+      affinityScore,
+      confidenceLevel,
+      avgTimeSec,
+    ),
+  };
+}
+
+/** Plantillas deterministas del feedback del simulador (réplica del frontend). */
+function buildSimulatorFeedback(
+  careerName: string,
+  steamAreaName: string,
+  steamScores: Record<SteamAxis, number>,
+  affinityScore: number,
+  confidenceLevel: 'high' | 'medium' | 'low',
+  avgTimeSec: number,
+): SimulatorFeedbackResponse {
+  const reasoningStyle =
+    avgTimeSec > 15
+      ? 'Reflexivo y analítico. Tomaste tiempo para evaluar cada escenario con cuidado antes de decidir.'
+      : avgTimeSec > 5
+        ? 'Equilibrado e intuitivo. Combinaste análisis con instinto al enfrentar cada situación.'
+        : 'Rápido y directo. Tus decisiones fueron ágiles; asegúrate de haber leído cada escenario con calma.';
+
+  const STRENGTH_LABELS: Record<SteamAxis, string> = {
+    ciencia: 'Pensamiento científico',
+    tecnologia: 'Aptitud tecnológica',
+    ingenieria: 'Resolución de problemas',
+    artes: 'Creatividad aplicada',
+    matematicas: 'Razonamiento lógico-matemático',
+  };
+  const AREA_LABELS: Record<SteamAxis, string> = {
+    ciencia: 'CIENCIA',
+    tecnologia: 'TECNOLOGÍA',
+    ingenieria: 'INGENIERÍA',
+    artes: 'ARTES',
+    matematicas: 'MATEMÁTICAS',
+  };
+
+  const sortedAxes = (Object.entries(steamScores) as [SteamAxis, number][]).sort(
+    ([, a], [, b]) => b - a,
+  );
+  const strengthsDetected = sortedAxes
+    .slice(0, 3)
+    .filter(([, s]) => s > 0)
+    .map(([axis]) => STRENGTH_LABELS[axis] || axis);
+  if (strengthsDetected.length === 0) {
+    strengthsDetected.push(
+      'Participación en el simulador',
+      'Exploración vocacional',
+      'Toma de decisiones',
+    );
+  }
+
+  const steamAffinityAnalysis =
+    sortedAxes
+      .slice(0, 3)
+      .filter(([, s]) => s > 0)
+      .map(
+        ([axis, s]) =>
+          `${AREA_LABELS[axis] || axis}: ${s >= 70 ? 'Fuerte' : s >= 40 ? 'Moderado' : 'En desarrollo'}`,
+      )
+      .join(', ') || `${steamAreaName}: Explorado`;
+
+  const honestRealityCheck =
+    affinityScore >= 75
+      ? `Tu comportamiento mostró una afinidad ${affinityScore >= 85 ? 'muy alta' : 'alta'} con ${careerName}. Las decisiones que tomaste reflejan un perfil compatible con los retos reales de esta carrera.`
+      : affinityScore >= 50
+        ? `Tienes bases sólidas para esta área, pero algunos escenarios revelaron zonas de incertidumbre. ${careerName} requiere habilidades que podrías desarrollar con práctica constante.`
+        : `Tu perfil de decisiones sugiere que esta área puede representar un reto significativo. Explora también otras opciones antes de comprometerte con ${careerName}.`;
+
+  return {
+    reasoning_style: reasoningStyle,
+    steam_affinity_analysis: steamAffinityAnalysis,
+    strengths_detected: strengthsDetected,
+    honest_reality_check: honestRealityCheck,
+    affinity_score: affinityScore,
+    confidence_level: confidenceLevel,
+    suggested_next_simulators: [],
+  };
+}
+
+// ===========================================================================
+//  A3b — Agregación de simuladores al vector del perfil
+// ===========================================================================
+
+/**
+ * Promedia las afinidades de los simuladores por eje. Ejes sin simulador
+ * se OMITEN (RG-9).
+ */
+export function computeSimulatorVector(
+  results: SimulatorAffinityResult[],
+): Partial<SteamVector> | null {
+  if (!results?.length) return null;
+  const acc: Partial<Record<SteamAxis, number[]>> = {};
+  for (const r of results) {
+    const axis = normalizeAxisKey(r.axis);
+    if (!axis) continue;
+    (acc[axis] ??= []).push(clamp(r.affinity));
+  }
+  const vector: Partial<SteamVector> = {};
+  for (const axis of AXES) {
+    const arr = acc[axis];
+    if (arr && arr.length) {
+      vector[axis] = Math.round(arr.reduce((s, v) => s + v, 0) / arr.length);
+    }
+  }
+  return Object.keys(vector).length ? vector : null;
 }
 
 // ===========================================================================

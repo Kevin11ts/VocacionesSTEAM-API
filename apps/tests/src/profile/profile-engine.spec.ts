@@ -9,8 +9,13 @@ import {
   recommendCareers,
   normalizeAxisKey,
   countAnswersByAxis,
+  computeCalibrationVector,
+  computeSimulatorAffinity,
+  computeSimulatorVector,
+  deriveBiasFlags,
   clamp,
 } from './profile-engine';
+import { CalibrationModuleResult } from '@app/common';
 import {
   DEFAULT_VOCATION_CATALOG,
   DEFAULT_CAREER_CATALOG,
@@ -216,6 +221,262 @@ describe('Motor vocacional — Vectores de prueba (mandato §13)', () => {
         expect(DEFAULT_VOCATION_CATALOG[axis].length).toBeGreaterThanOrEqual(3);
         expect(DEFAULT_CAREER_CATALOG[axis].length).toBeGreaterThanOrEqual(3);
       }
+    });
+  });
+
+  describe('A2 — Vector de calibración', () => {
+    // Módulo §13: ciencia 2L, tecnologia 1L, ingenieria 1L, artes 1D, matematicas 1D
+    const modulo13: CalibrationModuleResult = {
+      moduleId: 'gaming_habits',
+      answers: [
+        { axis: 'ciencia', liked: true },
+        { axis: 'ciencia', liked: true },
+        { axis: 'tecnologia', liked: true },
+        { axis: 'ingenieria', liked: true },
+        { axis: 'artes', liked: false },
+        { axis: 'matematicas', liked: false },
+      ],
+    };
+
+    it('reproduce el vector §13: {80, 65, 65, 42, 42}', () => {
+      expect(computeCalibrationVector([modulo13])).toEqual({
+        ciencia: 80,
+        tecnologia: 65,
+        ingenieria: 65,
+        artes: 42,
+        matematicas: 42,
+      });
+    });
+
+    it('omite ejes sin ninguna carta (RG-9)', () => {
+      const vector = computeCalibrationVector([
+        {
+          moduleId: 'm1',
+          answers: [{ axis: 'ingenieria', liked: true }],
+        },
+      ]);
+      expect(vector).toEqual({ ingenieria: 65 });
+      expect(vector).not.toHaveProperty('ciencia');
+    });
+
+    it('sin módulos devuelve null', () => {
+      expect(computeCalibrationVector([])).toBeNull();
+    });
+
+    it('acumula señal a través de varios módulos', () => {
+      const vector = computeCalibrationVector([
+        { moduleId: 'm1', answers: [{ axis: 'artes', liked: true }] },
+        { moduleId: 'm2', answers: [{ axis: 'artes', liked: true }] },
+      ]);
+      expect(vector).toEqual({ artes: 80 }); // 50 + 2*15
+    });
+  });
+
+  describe('A3a — Afinidad de un simulador', () => {
+    // Escenario de ACEPTACIÓN §5: primaryScore=90, sin sesgos, tiempo ≥20s.
+    // Pesos: ciencia acumula 10 (máximo) y tecnologia 9 → normalizado 90.
+    const steps = [
+      {
+        id: 's1',
+        type: 'DATA_ANALYSIS',
+        options: [
+          {
+            id: 'o1',
+            steamTraitWeight: { ciencia: 10, tecnologia: 9 },
+          },
+          { id: 'o2', steamArea: 'A' },
+        ],
+      },
+    ];
+    const baseInput = {
+      careerSlug: 'software',
+      careerName: 'Ingeniería de Software',
+      steamAreaName: 'Tecnología',
+      steps,
+      decisions: [
+        {
+          stepId: 's1',
+          stepType: 'DATA_ANALYSIS',
+          selectedOptionId: 'o1',
+          timeSpentMs: 20000,
+        },
+      ],
+      biasFlags: { too_fast: false, linear_pattern_detected: false },
+    };
+
+    it('primaryScore=90, tiempo ≥20s, sin sesgos → affinity 90', () => {
+      const { result } = computeSimulatorAffinity(baseInput);
+      expect(result.affinity).toBe(90);
+      expect(result.axis).toBe('tecnologia');
+    });
+
+    it('con sesgo lineal descuenta 15 → 75, confianza medium', () => {
+      const { result, feedback } = computeSimulatorAffinity({
+        ...baseInput,
+        biasFlags: { too_fast: false, linear_pattern_detected: true },
+      });
+      expect(result.affinity).toBe(75);
+      expect(feedback.confidence_level).toBe('medium');
+    });
+
+    it('con ambos sesgos descuenta 25, confianza low', () => {
+      const { result, feedback } = computeSimulatorAffinity({
+        ...baseInput,
+        biasFlags: { too_fast: true, linear_pattern_detected: true },
+      });
+      expect(result.affinity).toBe(65);
+      expect(feedback.confidence_level).toBe('low');
+    });
+
+    it('sin decisiones puntuables usa primaryScore=60', () => {
+      const { result } = computeSimulatorAffinity({
+        ...baseInput,
+        decisions: [{ stepId: 'sX', timeSpentMs: 20000 }],
+      });
+      // 60 * (0.7 + 0.3 * min(1, 20/20)) = 60
+      expect(result.affinity).toBe(60);
+    });
+
+    it('opción sin steamTraitWeight pero con steamArea suma +10 al eje mapeado', () => {
+      const { result } = computeSimulatorAffinity({
+        ...baseInput,
+        steamAreaName: 'Artes',
+        decisions: [
+          {
+            stepId: 's1',
+            stepType: 'DATA_ANALYSIS',
+            selectedOptionId: 'o2',
+            timeSpentMs: 20000,
+          },
+        ],
+      });
+      expect(result.axis).toBe('artes');
+      expect(result.affinity).toBe(100); // artes es el único eje: normaliza a 100
+    });
+
+    it('acota la afinidad al mínimo 10 (clamp especial 10-100)', () => {
+      const { result } = computeSimulatorAffinity({
+        ...baseInput,
+        steamAreaName: 'Artes', // eje sin acumulación → primary 0
+        biasFlags: { too_fast: true, linear_pattern_detected: true },
+      });
+      expect(result.affinity).toBe(10);
+    });
+  });
+
+  describe('A3a — Derivación de banderas de sesgo', () => {
+    const steps = [
+      {
+        id: 's1',
+        type: 'DATA_ANALYSIS',
+        options: [{ id: 'a' }, { id: 'b' }],
+      },
+      {
+        id: 's2',
+        type: 'TRADEOFF_DECISION',
+        options: [{ id: 'a' }, { id: 'b' }],
+      },
+      {
+        id: 's3',
+        type: 'DATA_ANALYSIS',
+        options: [{ id: 'a' }, { id: 'b' }],
+      },
+    ];
+
+    it('too_fast si algún paso tomó menos de 3 segundos', () => {
+      const flags = deriveBiasFlags(
+        [{ stepId: 's1', timeSpentMs: 2000 }],
+        steps,
+      );
+      expect(flags.too_fast).toBe(true);
+    });
+
+    it('linear_pattern si el mismo índice se repite ≥70% en 3+ decisiones', () => {
+      const flags = deriveBiasFlags(
+        [
+          {
+            stepId: 's1',
+            stepType: 'DATA_ANALYSIS',
+            selectedOptionId: 'a',
+            timeSpentMs: 10000,
+          },
+          {
+            stepId: 's2',
+            stepType: 'TRADEOFF_DECISION',
+            selectedOptionId: 'a',
+            timeSpentMs: 10000,
+          },
+          {
+            stepId: 's3',
+            stepType: 'DATA_ANALYSIS',
+            selectedOptionId: 'a',
+            timeSpentMs: 10000,
+          },
+        ],
+        steps,
+      );
+      expect(flags.linear_pattern_detected).toBe(true);
+      expect(flags.too_fast).toBe(false);
+    });
+  });
+
+  describe('A3b — Agregación de simuladores', () => {
+    it('reproduce §13: un simulador tecnologia 82 → {tecnologia: 82}', () => {
+      expect(
+        computeSimulatorVector([
+          { careerSlug: 'software', axis: 'tecnologia', affinity: 82 },
+        ]),
+      ).toEqual({ tecnologia: 82 });
+    });
+
+    it('promedia varios simuladores del mismo eje y omite el resto (RG-9)', () => {
+      const vector = computeSimulatorVector([
+        { careerSlug: 'software', axis: 'tecnologia', affinity: 82 },
+        { careerSlug: 'ia', axis: 'tecnologia', affinity: 71 },
+        { careerSlug: 'medicina', axis: 'ciencia', affinity: 60 },
+      ]);
+      expect(vector).toEqual({ tecnologia: 77, ciencia: 60 }); // (82+71)/2 = 76.5 → 77
+    });
+
+    it('sin simuladores devuelve null', () => {
+      expect(computeSimulatorVector([])).toBeNull();
+    });
+  });
+
+  describe('Pipeline completo §13 (A1+A2+A3 → A4)', () => {
+    it('reproduce el vector final exacto desde las entradas crudas', () => {
+      const a1 = computeTheoreticalVector(rawTeorico);
+      const a2 = computeCalibrationVector([
+        {
+          moduleId: 'gaming_habits',
+          answers: [
+            { axis: 'ciencia', liked: true },
+            { axis: 'ciencia', liked: true },
+            { axis: 'tecnologia', liked: true },
+            { axis: 'ingenieria', liked: true },
+            { axis: 'artes', liked: false },
+            { axis: 'matematicas', liked: false },
+          ],
+        },
+      ]);
+      const a3 = computeSimulatorVector([
+        { careerSlug: 'software', axis: 'tecnologia', affinity: 82 },
+      ]);
+      const final = blendVectors(a1, a2, a3);
+      expect(final).toEqual({
+        ciencia: 65,
+        tecnologia: 87,
+        ingenieria: 51,
+        artes: 34,
+        matematicas: 52,
+      });
+      expect(computeDominantAxes(final)).toEqual([
+        'tecnologia',
+        'ciencia',
+        'matematicas',
+        'ingenieria',
+        'artes',
+      ]);
     });
   });
 

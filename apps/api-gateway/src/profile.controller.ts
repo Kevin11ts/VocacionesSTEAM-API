@@ -10,7 +10,11 @@ import {
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { CurrentUser } from './decorators/current-user.decorator';
 import { lastValueFrom } from 'rxjs';
-import { ComputeProfileDto } from '@app/common';
+import {
+  ComputeProfileDto,
+  SubmitCalibrationDto,
+  SubmitSimulatorDto,
+} from '@app/common';
 
 /**
  * Motor de perfil vocacional STEAM (algoritmos deterministas A1-A7).
@@ -43,6 +47,78 @@ export class ProfileGatewayController {
       this.testsClient.send(
         { cmd: 'tests.compute-profile' },
         { userId: user.id, request: body },
+      ),
+    );
+  }
+}
+
+/** Módulos de calibración (swipe decks) que alimentan A2. */
+@ApiTags('Vocational Profile')
+@ApiBearerAuth()
+@UseGuards(JwtAuthGuard)
+@Controller('calibration')
+export class CalibrationGatewayController {
+  constructor(
+    @Inject('TESTS_SERVICE') private readonly testsClient: ClientProxy,
+  ) {}
+
+  @Post('submit')
+  @ApiOperation({
+    summary:
+      'Guarda un módulo de calibración (upsert por módulo) y recomputa el perfil',
+  })
+  @ApiResponse({
+    status: 201,
+    description:
+      '{ success, moduleId, profile } — profile es null si aún no hay test teórico',
+  })
+  @ApiBody({ type: SubmitCalibrationDto })
+  async submitCalibration(
+    @CurrentUser() user: any,
+    @Body() body: SubmitCalibrationDto,
+  ) {
+    return lastValueFrom(
+      this.testsClient.send(
+        { cmd: 'tests.submit-calibration-recompute' },
+        { userId: user.id, moduleId: body.moduleId, answers: body.answers },
+      ),
+    );
+  }
+}
+
+/** Resultados de simuladores de carrera que alimentan A3. */
+@ApiTags('Vocational Profile')
+@ApiBearerAuth()
+@UseGuards(JwtAuthGuard)
+@Controller('simulator')
+export class SimulatorGatewayController {
+  constructor(
+    @Inject('TESTS_SERVICE') private readonly testsClient: ClientProxy,
+  ) {}
+
+  @Post('submit')
+  @ApiOperation({
+    summary:
+      'Corre A3a sobre las decisiones del simulador, guarda el resultado y recomputa el perfil',
+  })
+  @ApiResponse({
+    status: 201,
+    description: '{ success, affinity, feedback, profile }',
+  })
+  @ApiBody({ type: SubmitSimulatorDto })
+  async submitSimulator(
+    @CurrentUser() user: any,
+    @Body() body: SubmitSimulatorDto,
+  ) {
+    return lastValueFrom(
+      this.testsClient.send(
+        { cmd: 'tests.submit-simulator' },
+        {
+          userId: user.id,
+          careerSlug: body.careerSlug,
+          decisions: body.decisions,
+          biasFlags: body.biasFlags,
+        },
       ),
     );
   }
