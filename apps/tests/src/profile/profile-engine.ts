@@ -9,6 +9,7 @@ import {
   VocationRecommendation,
   CALIBRATION_GAINS,
   SOURCE_WEIGHTS,
+  STEAM_AXES,
 } from '@app/common';
 
 /**
@@ -22,13 +23,7 @@ import {
  * Sin IA, sin aleatoriedad, sin timestamps en el cálculo (RG-2).
  */
 
-export const AXES: SteamAxis[] = [
-  'ciencia',
-  'tecnologia',
-  'ingenieria',
-  'artes',
-  'matematicas',
-];
+export const AXES: SteamAxis[] = STEAM_AXES;
 
 /** clamp(x) = max(0, min(100, round(x))). Redondeo estándar, 0.5 sube (RG-6). */
 export function clamp(n: number): number {
@@ -39,9 +34,64 @@ export function emptyVector(): SteamVector {
   return { ciencia: 0, tecnologia: 0, ingenieria: 0, artes: 0, matematicas: 0 };
 }
 
+/**
+ * Normaliza una clave de eje a la forma canónica RG-5 (sin acentos, en
+ * minúscula, plural para artes/matemáticas). Los datos legacy de la BD usan
+ * 'arte' (singular) en Option.steamTrait; aquí se corrige.
+ */
+export function normalizeAxisKey(value: string): SteamAxis | null {
+  const v = (value || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim();
+  if (v === 'ciencia' || v === 'ciencias') return 'ciencia';
+  if (v === 'tecnologia') return 'tecnologia';
+  if (v === 'ingenieria') return 'ingenieria';
+  if (v === 'arte' || v === 'artes') return 'artes';
+  if (v === 'matematica' || v === 'matematicas') return 'matematicas';
+  return null;
+}
+
 // ===========================================================================
 //  A1 — Vector teórico
 // ===========================================================================
+
+/** Forma mínima de una pregunta con opciones para contar respuestas. */
+export interface QuestionForCounting {
+  id: string;
+  options?: Array<{ letter: string; steamTrait: string }> | null;
+}
+
+/**
+ * Convierte las respuestas { [questionId]: letra } en el conteo crudo por
+ * eje que consume A1: cada respuesta suma +1 al steamTrait de la opción
+ * elegida. Respuestas sin pregunta u opción correspondiente se ignoran.
+ */
+export function countAnswersByAxis(
+  answers: Record<string, string>,
+  questions: QuestionForCounting[],
+): Record<SteamAxis, number> {
+  const raw: Record<SteamAxis, number> = {
+    ciencia: 0,
+    tecnologia: 0,
+    ingenieria: 0,
+    artes: 0,
+    matematicas: 0,
+  };
+  const byId = new Map(questions.map((q) => [String(q.id), q]));
+  for (const [questionId, letter] of Object.entries(answers || {})) {
+    const question = byId.get(String(questionId));
+    if (!question?.options) continue;
+    const option = question.options.find(
+      (o) => o.letter?.toUpperCase() === String(letter).toUpperCase(),
+    );
+    if (!option) continue;
+    const axis = normalizeAxisKey(option.steamTrait);
+    if (axis) raw[axis]++;
+  }
+  return raw;
+}
 
 /**
  * Convierte los conteos crudos por eje del test teórico a un vector 0-100

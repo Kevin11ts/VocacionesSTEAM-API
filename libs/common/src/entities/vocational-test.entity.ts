@@ -9,6 +9,7 @@ import {
 } from 'typeorm';
 import { User } from './user.entity';
 import { AiRecommendation } from './ai-recommendation.entity';
+import { VocationalProfile } from '../types/vocational-profile.types';
 
 @Entity('vocational_tests')
 export class VocationalTest {
@@ -29,6 +30,10 @@ export class VocationalTest {
 
   @Column()
   dominantTraits: string;
+
+  /** Perfil vocacional completo calculado por el motor determinista (A1-A7). */
+  @Column({ type: 'jsonb', nullable: true })
+  profile: VocationalProfile;
 
   @OneToOne(() => AiRecommendation, (rec: AiRecommendation) => rec.test, {
     cascade: true,

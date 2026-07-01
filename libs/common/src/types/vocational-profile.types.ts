@@ -25,6 +25,15 @@ export type SteamAxis =
   | 'artes'
   | 'matematicas';
 
+/** Lista canónica de los 5 ejes, en orden STEAM. */
+export const STEAM_AXES: SteamAxis[] = [
+  'ciencia',
+  'tecnologia',
+  'ingenieria',
+  'artes',
+  'matematicas',
+];
+
 /** Vector de puntuaciones STEAM. Cada valor es entero 0-100 (RG-6). */
 export interface SteamVector {
   ciencia: number;

@@ -25,6 +25,7 @@ import {
   CareersController,
   AdminCareersCatalogController,
 } from './careers.controller';
+import { ProfileGatewayController } from './profile.controller';
 
 @Module({
   imports: [
@@ -96,6 +97,7 @@ import {
     AdminStatsController,
     CareersController,
     AdminCareersCatalogController,
+    ProfileGatewayController,
   ],
   providers: [JwtStrategy, JwtRefreshStrategy, GoogleStrategy, RolesGuard],
 })

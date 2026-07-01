@@ -7,6 +7,8 @@ import {
   affinityFor,
   recommendVocations,
   recommendCareers,
+  normalizeAxisKey,
+  countAnswersByAxis,
   clamp,
 } from './profile-engine';
 import {
@@ -214,6 +216,51 @@ describe('Motor vocacional — Vectores de prueba (mandato §13)', () => {
         expect(DEFAULT_VOCATION_CATALOG[axis].length).toBeGreaterThanOrEqual(3);
         expect(DEFAULT_CAREER_CATALOG[axis].length).toBeGreaterThanOrEqual(3);
       }
+    });
+  });
+
+  describe('Mapeo de respuestas a conteos (entrada de A1)', () => {
+    it('normaliza claves de eje al contrato RG-5', () => {
+      expect(normalizeAxisKey('arte')).toBe('artes'); // dato legacy en BD
+      expect(normalizeAxisKey('Artes')).toBe('artes');
+      expect(normalizeAxisKey('Matemáticas')).toBe('matematicas');
+      expect(normalizeAxisKey('Tecnología')).toBe('tecnologia');
+      expect(normalizeAxisKey('otracosa')).toBeNull();
+    });
+
+    it('suma +1 al steamTrait de la opción elegida por pregunta', () => {
+      const questions = [
+        {
+          id: 'q1',
+          options: [
+            { letter: 'A', steamTrait: 'ciencia' },
+            { letter: 'B', steamTrait: 'arte' },
+          ],
+        },
+        {
+          id: 'q2',
+          options: [
+            { letter: 'A', steamTrait: 'tecnologia' },
+            { letter: 'B', steamTrait: 'matematicas' },
+          ],
+        },
+      ];
+      const raw = countAnswersByAxis({ q1: 'B', q2: 'A' }, questions);
+      expect(raw).toEqual({
+        ciencia: 0,
+        tecnologia: 1,
+        ingenieria: 0,
+        artes: 1, // 'arte' legacy contó para 'artes'
+        matematicas: 0,
+      });
+    });
+
+    it('ignora respuestas sin pregunta u opción correspondiente', () => {
+      const raw = countAnswersByAxis(
+        { inexistente: 'A', q1: 'Z' },
+        [{ id: 'q1', options: [{ letter: 'A', steamTrait: 'ciencia' }] }],
+      );
+      expect(Object.values(raw).every((v) => v === 0)).toBe(true);
     });
   });
 

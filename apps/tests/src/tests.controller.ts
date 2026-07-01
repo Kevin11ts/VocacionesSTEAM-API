@@ -1,15 +1,33 @@
 import { Controller } from '@nestjs/common';
-import { CreateQuestionDto, SteamAxis } from '@app/common';
+import {
+  CreateQuestionDto,
+  ProfileComputationRequest,
+  SteamAxis,
+} from '@app/common';
 import { MessagePattern, Payload } from '@nestjs/microservices';
 import { TestsService } from './tests.service';
 import { CatalogService } from './profile/catalog.service';
+import { ProfileService } from './profile/profile.service';
 
 @Controller()
 export class TestsController {
   constructor(
     private readonly testsService: TestsService,
     private readonly catalogService: CatalogService,
+    private readonly profileService: ProfileService,
   ) {}
+
+  // --- Motor de perfil vocacional (A1-A7) ---
+  @MessagePattern({ cmd: 'tests.compute-profile' })
+  async computeProfile(
+    @Payload()
+    payload: {
+      userId: string;
+      request: ProfileComputationRequest;
+    },
+  ) {
+    return this.profileService.computeProfile(payload.userId, payload.request);
+  }
 
   @MessagePattern({ cmd: 'tests.get-questions' })
   async getQuestions() {

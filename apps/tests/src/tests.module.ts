@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { TestsController } from './tests.controller';
 import { TestsService } from './tests.service';
 import { CatalogService } from './profile/catalog.service';
+import { ProfileService } from './profile/profile.service';
 import {
   CommonModule,
   User,
@@ -61,6 +62,6 @@ import { ConfigService } from '@nestjs/config';
     ]),
   ],
   controllers: [TestsController],
-  providers: [TestsService, CatalogService],
+  providers: [TestsService, CatalogService, ProfileService],
 })
 export class TestsModule {}

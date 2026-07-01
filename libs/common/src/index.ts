@@ -23,6 +23,7 @@ export * from './types/vocational-profile.types';
 
 export * from './dto/auth.dto';
 export * from './dto/test.dto';
+export * from './dto/profile.dto';
 export * from './dto/saved-university.dto';
 export * from './dto/saved-course.dto';
 export * from './common.module';
