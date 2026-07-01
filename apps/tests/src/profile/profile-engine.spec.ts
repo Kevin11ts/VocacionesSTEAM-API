@@ -4,8 +4,15 @@ import {
   computeDominantAxes,
   computeCalibrationState,
   buildNarrative,
+  affinityFor,
+  recommendVocations,
+  recommendCareers,
   clamp,
 } from './profile-engine';
+import {
+  DEFAULT_VOCATION_CATALOG,
+  DEFAULT_CAREER_CATALOG,
+} from './catalog-seed';
 import { SteamVector } from '@app/common';
 
 /**
@@ -153,6 +160,60 @@ describe('Motor vocacional — Vectores de prueba (mandato §13)', () => {
       const n = buildNarrative(computeDominantAxes(scores), scores, cal);
       expect(n.profileName).toBe('Perfil Tecnológico–Científico');
       expect(n.profileArchetype).toBe('Creador Digital Investigador');
+    });
+  });
+
+  describe('A6/A7 — Afinidades de recomendación', () => {
+    const finalScores: SteamVector = {
+      ciencia: 65,
+      tecnologia: 87,
+      ingenieria: 51,
+      artes: 34,
+      matematicas: 52,
+    };
+    const dominant = computeDominantAxes(finalScores);
+
+    it('§13: afinidades de los 3 ejes dominantes = 86, 67, 56', () => {
+      expect(affinityFor('tecnologia', finalScores)).toBe(86);
+      expect(affinityFor('ciencia', finalScores)).toBe(67);
+      expect(affinityFor('matematicas', finalScores)).toBe(56);
+    });
+
+    it('A6 devuelve exactamente 4 vocaciones ordenadas por afinidad desc', () => {
+      const vocations = recommendVocations(
+        dominant,
+        finalScores,
+        DEFAULT_VOCATION_CATALOG,
+      );
+      expect(vocations).toHaveLength(4);
+      // 3 del eje tecnologia (86) y la 4ª del segundo eje dominante (ciencia, 67)
+      expect(vocations.slice(0, 3).every((v) => v.axis === 'tecnologia')).toBe(
+        true,
+      );
+      expect(vocations.slice(0, 3).every((v) => v.affinity === 86)).toBe(true);
+      expect(vocations[3].axis).toBe('ciencia');
+      expect(vocations[3].affinity).toBe(67);
+    });
+
+    it('A7 devuelve exactamente 5 carreras con rationale del eje', () => {
+      const careers = recommendCareers(
+        dominant,
+        finalScores,
+        DEFAULT_CAREER_CATALOG,
+      );
+      expect(careers).toHaveLength(5);
+      expect(careers.slice(0, 3).every((c) => c.affinity === 86)).toBe(true);
+      expect(careers.slice(3).every((c) => c.affinity === 67)).toBe(true);
+      expect(careers[0].rationale).toBe(
+        'Encaja con tu fuerte afinidad en Tecnología: aprendes herramientas nuevas con facilidad y disfrutas automatizar y construir soluciones digitales.',
+      );
+    });
+
+    it('los catálogos semilla cumplen el mínimo de 3 por eje (mandato §11)', () => {
+      for (const axis of Object.keys(DEFAULT_VOCATION_CATALOG)) {
+        expect(DEFAULT_VOCATION_CATALOG[axis].length).toBeGreaterThanOrEqual(3);
+        expect(DEFAULT_CAREER_CATALOG[axis].length).toBeGreaterThanOrEqual(3);
+      }
     });
   });
 

@@ -1,11 +1,15 @@
 import { Controller } from '@nestjs/common';
-import { CreateQuestionDto } from '@app/common';
+import { CreateQuestionDto, SteamAxis } from '@app/common';
 import { MessagePattern, Payload } from '@nestjs/microservices';
 import { TestsService } from './tests.service';
+import { CatalogService } from './profile/catalog.service';
 
 @Controller()
 export class TestsController {
-  constructor(private readonly testsService: TestsService) {}
+  constructor(
+    private readonly testsService: TestsService,
+    private readonly catalogService: CatalogService,
+  ) {}
 
   @MessagePattern({ cmd: 'tests.get-questions' })
   async getQuestions() {
@@ -144,5 +148,48 @@ export class TestsController {
   @MessagePattern({ cmd: 'tests.get-calibration' })
   async getCalibration(@Payload() payload: { userId: string }) {
     return this.testsService.getCalibration(payload.userId);
+  }
+
+  // --- Catálogos de vocaciones/carreras (A6/A7) ---
+  @MessagePattern({ cmd: 'tests.get-catalogs' })
+  async getCatalogs() {
+    return this.catalogService.getFullCatalog();
+  }
+
+  @MessagePattern({ cmd: 'tests.create-vocation' })
+  async createVocation(@Payload() data: any) {
+    return this.catalogService.createVocation(data);
+  }
+
+  @MessagePattern({ cmd: 'tests.update-vocation' })
+  async updateVocation(@Payload() payload: { id: string; data: any }) {
+    return this.catalogService.updateVocation(payload.id, payload.data);
+  }
+
+  @MessagePattern({ cmd: 'tests.delete-vocation' })
+  async deleteVocation(@Payload() payload: { id: string }) {
+    return this.catalogService.deleteVocation(payload.id);
+  }
+
+  @MessagePattern({ cmd: 'tests.create-career-item' })
+  async createCareerItem(@Payload() data: any) {
+    return this.catalogService.createCareer(data);
+  }
+
+  @MessagePattern({ cmd: 'tests.update-career-item' })
+  async updateCareerItem(@Payload() payload: { id: string; data: any }) {
+    return this.catalogService.updateCareer(payload.id, payload.data);
+  }
+
+  @MessagePattern({ cmd: 'tests.delete-career-item' })
+  async deleteCareerItem(@Payload() payload: { id: string }) {
+    return this.catalogService.deleteCareer(payload.id);
+  }
+
+  @MessagePattern({ cmd: 'tests.update-axis-meta' })
+  async updateAxisMeta(
+    @Payload() payload: { axis: SteamAxis; data: any },
+  ) {
+    return this.catalogService.updateAxisMeta(payload.axis, payload.data);
   }
 }

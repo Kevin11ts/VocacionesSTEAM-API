@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TestsController } from './tests.controller';
 import { TestsService } from './tests.service';
+import { CatalogService } from './profile/catalog.service';
 import {
   CommonModule,
   User,
@@ -16,6 +17,9 @@ import {
   ComplementaryTest,
   UserHistory,
   CalibrationResult,
+  VocationCatalogItem,
+  CareerCatalogItem,
+  AxisMeta,
 } from '@app/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ClientsModule, Transport } from '@nestjs/microservices';
@@ -38,6 +42,9 @@ import { ConfigService } from '@nestjs/config';
       ComplementaryTest,
       UserHistory,
       CalibrationResult,
+      VocationCatalogItem,
+      CareerCatalogItem,
+      AxisMeta,
     ]),
     ClientsModule.registerAsync([
       {
@@ -54,6 +61,6 @@ import { ConfigService } from '@nestjs/config';
     ]),
   ],
   controllers: [TestsController],
-  providers: [TestsService],
+  providers: [TestsService, CatalogService],
 })
 export class TestsModule {}

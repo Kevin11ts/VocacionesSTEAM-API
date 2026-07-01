@@ -2,9 +2,11 @@ import {
   SteamAxis,
   SteamVector,
   CalibrationState,
+  CareerRecommendation,
   ConfidenceLevel,
   NextStep,
   ProfileStrength,
+  VocationRecommendation,
   CALIBRATION_GAINS,
   SOURCE_WEIGHTS,
 } from '@app/common';
@@ -291,6 +293,69 @@ export function buildWorkStyle(
     for (const t of meta[axis].workStyle) traits.add(t);
   }
   return [...traits];
+}
+
+// ===========================================================================
+//  A6 — Vocaciones predominantes (Top 4) y A7 — Carreras (Top 5)
+// ===========================================================================
+
+export const AFINIDAD_FACTOR = 0.85;
+export const AFINIDAD_OFFSET = 12;
+
+/** Entrada de catálogo de vocaciones (sin afinidad: se calcula en runtime). */
+export type VocationCatalogEntry = Omit<VocationRecommendation, 'affinity' | 'axis'>;
+/** Entrada de catálogo de carreras (sin afinidad ni rationale). */
+export type CareerCatalogEntry = Omit<
+  CareerRecommendation,
+  'affinity' | 'rationale' | 'axis'
+>;
+
+/** Afinidad de una recomendación: clamp(round(score*0.85 + 12)). */
+export function affinityFor(axis: SteamAxis, scores: SteamVector): number {
+  return clamp(Math.round(scores[axis] * AFINIDAD_FACTOR + AFINIDAD_OFFSET));
+}
+
+/**
+ * A6: recorre el catálogo de los 3 ejes dominantes, asigna afinidad y
+ * devuelve las 4 vocaciones más afines.
+ */
+export function recommendVocations(
+  dominant: SteamAxis[],
+  scores: SteamVector,
+  catalog: Record<SteamAxis, VocationCatalogEntry[]>,
+): VocationRecommendation[] {
+  const out: VocationRecommendation[] = [];
+  for (const axis of dominant.slice(0, 3)) {
+    for (const v of catalog[axis] ?? []) {
+      out.push({ ...v, axis, affinity: affinityFor(axis, scores) });
+    }
+  }
+  return out.sort((a, b) => b.affinity - a.affinity).slice(0, 4);
+}
+
+/**
+ * A7: idéntico a A6 pero genera el rationale a partir del eje y devuelve
+ * las 5 carreras más afines.
+ */
+export function recommendCareers(
+  dominant: SteamAxis[],
+  scores: SteamVector,
+  catalog: Record<SteamAxis, CareerCatalogEntry[]>,
+  meta: Record<SteamAxis, AxisMetaData> = DEFAULT_AXIS_META,
+): CareerRecommendation[] {
+  const out: CareerRecommendation[] = [];
+  for (const axis of dominant.slice(0, 3)) {
+    const m = meta[axis];
+    for (const c of catalog[axis] ?? []) {
+      out.push({
+        ...c,
+        axis,
+        affinity: affinityFor(axis, scores),
+        rationale: `Encaja con tu fuerte afinidad en ${m.label}: ${lower(m.strengthDesc)}`,
+      });
+    }
+  }
+  return out.sort((a, b) => b.affinity - a.affinity).slice(0, 5);
 }
 
 export function buildNextSteps(
