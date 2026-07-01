@@ -21,7 +21,6 @@ import {
 } from './complementary-tests.controller';
 import { AdminStatsController } from './admin.controller';
 import { RolesGuard } from './guards/roles.guard';
-import { CareersController } from './careers.controller';
 
 @Module({
   imports: [
@@ -91,7 +90,6 @@ import { CareersController } from './careers.controller';
     ComplementaryTestsController,
     AdminComplementaryTestsController,
     AdminStatsController,
-    CareersController,
   ],
   providers: [JwtStrategy, JwtRefreshStrategy, GoogleStrategy, RolesGuard],
 })
