@@ -76,6 +76,18 @@ export class ProfileService {
     userId: string,
     request: ProfileComputationRequest,
   ): Promise<VocationalProfile> {
+    const { profile } = await this.computeAndPersist(userId, request);
+    return profile;
+  }
+
+  /**
+   * Variante que además expone la entrada de historial creada (la usa el
+   * endpoint legacy tests.submit para conservar su forma de respuesta).
+   */
+  async computeAndPersist(
+    userId: string,
+    request: ProfileComputationRequest,
+  ): Promise<{ test: VocationalTest; profile: VocationalProfile }> {
     const user = await this.userRepository.findOne({ where: { id: userId } });
     if (!user) throw new RpcException('User not found');
 
@@ -95,7 +107,7 @@ export class ProfileService {
     const testCount = await this.testsRepository.count({
       where: { user: { id: userId } },
     });
-    const test = this.testsRepository.create({
+    let test = this.testsRepository.create({
       user,
       testName: `Test Vocacional ${testCount + 1}`,
       answers: request.theoreticalAnswers,
@@ -103,9 +115,9 @@ export class ProfileService {
       dominantTraits: this.legacyDominantTraits(profile.dominantAxes),
       profile,
     });
-    await this.testsRepository.save(test);
+    test = await this.testsRepository.save(test);
 
-    return profile;
+    return { test, profile };
   }
 
   /**

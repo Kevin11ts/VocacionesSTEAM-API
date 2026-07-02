@@ -1,28 +1,33 @@
 import { Controller, Logger } from '@nestjs/common';
 import { MessagePattern, Payload } from '@nestjs/microservices';
+import { UniversityMatchRequest } from '@app/common';
 import { AiService } from './ai.service';
+import { UniversityMatchService } from './university-match.service';
 
 @Controller()
 export class AiController {
   private readonly logger = new Logger(AiController.name);
 
-  constructor(private readonly aiService: AiService) {}
+  constructor(
+    private readonly aiService: AiService,
+    private readonly universityMatchService: UniversityMatchService,
+  ) {}
 
-  @MessagePattern({ cmd: 'ai.generate-recommendations' })
-  async generateRecommendations(
+  /**
+   * A8 — Matching de universidades (única llamada a IA del sistema).
+   * El perfil vocacional (A1-A7) es 100% determinista y vive en apps/tests.
+   */
+  @MessagePattern({ cmd: 'ai.match-universities' })
+  async matchUniversities(
     @Payload()
     payload: {
-      locationInput: string;
-      scores: Record<string, number>;
-      studentName: string;
-      dominantTraits: string;
+      userId: string;
+      request: UniversityMatchRequest;
     },
   ) {
-    return this.aiService.generateRecommendations(
-      payload.locationInput,
-      payload.scores,
-      payload.studentName,
-      payload.dominantTraits,
+    return this.universityMatchService.matchUniversities(
+      payload.userId,
+      payload.request,
     );
   }
 

@@ -1,10 +1,9 @@
-import { Injectable, Inject, Logger } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import {
   User,
   VocationalTest,
-  AiRecommendation,
   Question,
   Option,
   UserSettings,
@@ -15,8 +14,8 @@ import {
   UserHistory,
   CalibrationResult,
 } from '@app/common';
-import { ClientProxy, RpcException } from '@nestjs/microservices';
-import { lastValueFrom } from 'rxjs';
+import { RpcException } from '@nestjs/microservices';
+import { ProfileService } from './profile/profile.service';
 
 @Injectable()
 export class TestsService {
@@ -38,7 +37,7 @@ export class TestsService {
     private readonly userHistoryRepository: Repository<UserHistory>,
     @InjectRepository(CalibrationResult)
     private readonly calibrationRepository: Repository<CalibrationResult>,
-    @Inject('AI_SERVICE') private readonly aiClient: ClientProxy,
+    private readonly profileService: ProfileService,
   ) {}
 
   async getQuestions() {
@@ -84,73 +83,29 @@ export class TestsService {
     return { success: true, message: 'Question deleted' };
   }
 
+  /**
+   * Endpoint legacy de envío de test. Ahora corre el motor determinista
+   * (A1-A7) en lugar de llamar a la IA: la descripción del perfil sale de
+   * las plantillas narrativas y las universidades se piden aparte vía
+   * POST /universities/match (A8).
+   */
   async submitTest(
     userId: string,
     answers: Record<string, string>,
     locationInput?: string,
   ) {
-    const user = await this.userRepository.findOne({ where: { id: userId } });
-    if (!user) throw new RpcException('User not found');
-
-    let scores = this.calculateScores(answers);
-
-    // Apply Calibration Results
-    const calibrations = await this.calibrationRepository.find({
-      where: { user: { id: userId } },
-    });
-    if (calibrations && calibrations.length > 0) {
-      scores = this.applyCalibrationToScores(scores, calibrations);
-    }
-
-    const dominantTraits = this.getDominantTraits(scores);
-
-    const testCount = await this.testsRepository.count({
-      where: { user: { id: userId } },
-    });
-    const testName = `Test Vocacional ${testCount + 1}`;
-
-    let test = this.testsRepository.create({
-      user,
-      testName,
-      answers,
-      profileScores: scores,
-      dominantTraits,
-    });
-    test = await this.testsRepository.save(test);
-
-    let aiResponse;
-    try {
-      this.logger.log(`Calling AI Service for Test ${test.id}`);
-      aiResponse = await lastValueFrom(
-        this.aiClient.send(
-          { cmd: 'ai.generate-recommendations' },
-          {
-            locationInput,
-            scores,
-            studentName: user.fullname,
-            dominantTraits,
-          },
-        ),
-      );
-    } catch (error) {
-      this.logger.error('Failed to get AI recommendations', error);
-      throw new RpcException('Failed to generate AI recommendations');
-    }
-
-    const recommendation = new AiRecommendation();
-    recommendation.locationInput = locationInput || 'México';
-    recommendation.aiGeneralAdvice = aiResponse.description;
-    recommendation.universities = aiResponse.universities;
-    test.recommendation = recommendation;
-
-    await this.testsRepository.save(test);
+    const { test, profile } = await this.profileService.computeAndPersist(
+      userId,
+      { theoreticalAnswers: answers, locationInput },
+    );
 
     return {
       testId: test.id,
-      scores,
-      dominantTraits,
-      aiProfileDescription: aiResponse.description,
-      recommendations: aiResponse.universities,
+      scores: profile.steamScores,
+      dominantTraits: test.dominantTraits,
+      aiProfileDescription: profile.profileSummary,
+      recommendations: [],
+      profile,
     };
   }
 
@@ -233,71 +188,6 @@ export class TestsService {
 
     await this.testsRepository.remove(test);
     return { success: true, message: 'Test deleted' };
-  }
-
-  private calculateScores(
-    answers: Record<string, string>,
-  ): Record<string, number> {
-    const scores = {
-      ciencia: 0,
-      tecnologia: 0,
-      ingenieria: 0,
-      arte: 0,
-      matematicas: 0,
-    };
-
-    Object.values(answers).forEach((val) => {
-      // Lógica simulada que mapea A, B, C, D a los rasgos STEAM basados en la frecuencia
-      // En una aplicación real, se mapearía el ID de la pregunta al rasgo dominante.
-      if (val === 'A') scores.ciencia++;
-      else if (val === 'B') scores.tecnologia++;
-      else if (val === 'C') scores.ingenieria++;
-      else if (val === 'D') scores.arte++;
-      else scores.matematicas++;
-    });
-
-    return scores;
-  }
-
-  private applyCalibrationToScores(
-    scores: Record<string, number>,
-    calibrations: CalibrationResult[],
-  ): Record<string, number> {
-    const adjustedScores = { ...scores };
-
-    // Aquí se aplica la suma de los valores resultantes de los submódulos.
-    // Asumiendo que los test de calibración pueden otorgar puntos extra a ciencias, tecnología, etc.
-    // Dado que no se proporcionó una fórmula matemática exacta, sumamos valores por defecto o simulados.
-    // TODO: Implementar el mapeo exacto de 'answers' a 'steamTraits' cuando se definan las reglas.
-
-    for (const cal of calibrations) {
-      if (cal.moduleId === 'gaming_habits') {
-        adjustedScores.tecnologia += 2;
-        adjustedScores.ingenieria += 1;
-      } else if (cal.moduleId === 'physical_hobbies') {
-        adjustedScores.ciencia += 2;
-      } else if (cal.moduleId === 'digital_consumption') {
-        adjustedScores.arte += 1;
-      } else if (cal.moduleId === 'everyday_mechanics') {
-        adjustedScores.ingenieria += 2;
-        adjustedScores.matematicas += 1;
-      }
-    }
-    return adjustedScores;
-  }
-
-  private getDominantTraits(scores: Record<string, number>): string {
-    const entries = Object.entries(scores).sort((a, b) => b[1] - a[1]);
-    const top1 = entries[0];
-    const top2 = entries[1];
-
-    const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
-
-    if (top2[1] === 0) {
-      return cap(top1[0]); // Si el segundo puntaje es 0, solo retorna el primero
-    }
-
-    return `${cap(top1[0])} + ${cap(top2[0])}`;
   }
 
   // --- Career Simulators ---

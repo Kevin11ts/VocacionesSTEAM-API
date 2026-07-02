@@ -23,8 +23,6 @@ import {
   AxisMeta,
 } from '@app/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { ClientsModule, Transport } from '@nestjs/microservices';
-import { ConfigService } from '@nestjs/config';
 
 @Module({
   imports: [
@@ -46,19 +44,6 @@ import { ConfigService } from '@nestjs/config';
       VocationCatalogItem,
       CareerCatalogItem,
       AxisMeta,
-    ]),
-    ClientsModule.registerAsync([
-      {
-        name: 'AI_SERVICE',
-        inject: [ConfigService],
-        useFactory: (config: ConfigService) => ({
-          transport: Transport.TCP,
-          options: {
-            host: config.get<string>('HOST_AI', '127.0.0.1'),
-            port: config.get<number>('PORT_AI', 3004),
-          },
-        }),
-      },
     ]),
   ],
   controllers: [TestsController],

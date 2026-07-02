@@ -20,7 +20,9 @@ import {
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { RolesGuard } from './guards/roles.guard';
 import { Roles } from './decorators/roles.decorator';
+import { CurrentUser } from './decorators/current-user.decorator';
 import { lastValueFrom } from 'rxjs';
+import { MatchUniversitiesDto } from '@app/common';
 
 @ApiTags('Universities')
 @Controller('universities')
@@ -33,6 +35,30 @@ export class UniversitiesController {
   async getUniversities() {
     return lastValueFrom(
       this.aiClient.send({ cmd: 'ai.get-universities' }, {}),
+    );
+  }
+
+  @ApiOperation({
+    summary:
+      'A8: matching de universidades (datos duros + IA, filtros sobre caché)',
+  })
+  @ApiResponse({
+    status: 201,
+    description: '{ matches: [...], generatedAt } rankeado por matchScore',
+  })
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @ApiBody({ type: MatchUniversitiesDto })
+  @Post('match')
+  async matchUniversities(
+    @CurrentUser() user: any,
+    @Body() body: MatchUniversitiesDto,
+  ) {
+    return lastValueFrom(
+      this.aiClient.send(
+        { cmd: 'ai.match-universities' },
+        { userId: user.id, request: body },
+      ),
     );
   }
 }
