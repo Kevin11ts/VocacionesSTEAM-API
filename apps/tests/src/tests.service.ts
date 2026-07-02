@@ -193,12 +193,23 @@ export class TestsService {
   // --- Career Simulators ---
   async getSimulators() {
     return this.careerSimulatorRepository.find({
-      select: ['id', 'slug', 'careerName', 'steamArea', 'difficulty', 'status', 'shortDescription', 'tags'],
+      select: [
+        'id',
+        'slug',
+        'careerName',
+        'steamArea',
+        'difficulty',
+        'status',
+        'shortDescription',
+        'tags',
+      ],
     });
   }
 
   async getSimulatorBySlug(slug: string) {
-    const simulator = await this.careerSimulatorRepository.findOne({ where: { slug } });
+    const simulator = await this.careerSimulatorRepository.findOne({
+      where: { slug },
+    });
     if (!simulator) throw new RpcException('Simulator not found');
     return simulator;
   }
@@ -212,7 +223,9 @@ export class TestsService {
   }
 
   async updateSimulator(id: string, data: Partial<CareerSimulator>) {
-    const simulator = await this.careerSimulatorRepository.findOne({ where: { id } });
+    const simulator = await this.careerSimulatorRepository.findOne({
+      where: { id },
+    });
     if (!simulator) throw new RpcException('Simulator not found');
 
     if (data.steps && data.steps.length !== 6) {
@@ -224,7 +237,9 @@ export class TestsService {
   }
 
   async deleteSimulator(id: string) {
-    const simulator = await this.careerSimulatorRepository.findOne({ where: { id } });
+    const simulator = await this.careerSimulatorRepository.findOne({
+      where: { id },
+    });
     if (!simulator) throw new RpcException('Simulator not found');
     await this.careerSimulatorRepository.remove(simulator);
     return { success: true, message: 'Simulator deleted' };

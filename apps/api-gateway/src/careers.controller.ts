@@ -34,14 +34,18 @@ export class CareersController {
     @Inject('TESTS_SERVICE') private readonly testsClient: ClientProxy,
   ) {}
 
-  @ApiOperation({ summary: 'Get vocation/career catalogs and axis metadata (Public)' })
+  @ApiOperation({
+    summary: 'Get vocation/career catalogs and axis metadata (Public)',
+  })
   @ApiResponse({
     status: 200,
     description: 'Returns { vocations, careers, axisMeta }',
   })
   @Get('catalog')
   async getCatalogs() {
-    return lastValueFrom(this.testsClient.send({ cmd: 'tests.get-catalogs' }, {}));
+    return lastValueFrom(
+      this.testsClient.send({ cmd: 'tests.get-catalogs' }, {}),
+    );
   }
 }
 
@@ -136,8 +140,13 @@ export class AdminCareersCatalogController {
 
   // --- Metadatos narrativos por eje ---
 
-  @ApiOperation({ summary: 'Update narrative metadata for a STEAM axis (Admin only)' })
-  @ApiParam({ name: 'axis', description: 'ciencia | tecnologia | ingenieria | artes | matematicas' })
+  @ApiOperation({
+    summary: 'Update narrative metadata for a STEAM axis (Admin only)',
+  })
+  @ApiParam({
+    name: 'axis',
+    description: 'ciencia | tecnologia | ingenieria | artes | matematicas',
+  })
   @ApiBody({
     schema: {
       example: {

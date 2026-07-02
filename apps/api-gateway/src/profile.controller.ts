@@ -36,7 +36,8 @@ export class ProfileGatewayController {
   })
   @ApiResponse({
     status: 201,
-    description: 'VocationalProfile completo con contributions y profileVersion',
+    description:
+      'VocationalProfile completo con contributions y profileVersion',
   })
   @ApiBody({ type: ComputeProfileDto })
   async computeProfile(

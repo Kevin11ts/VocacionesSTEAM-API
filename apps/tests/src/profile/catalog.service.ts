@@ -79,7 +79,9 @@ export class CatalogService implements OnApplicationBootstrap {
 
   // --- Lecturas agrupadas por eje (las consume el motor) ---
 
-  async getVocationCatalog(): Promise<Record<SteamAxis, VocationCatalogEntry[]>> {
+  async getVocationCatalog(): Promise<
+    Record<SteamAxis, VocationCatalogEntry[]>
+  > {
     const items = await this.vocationRepository.find({
       order: { createdAt: 'ASC' },
     });

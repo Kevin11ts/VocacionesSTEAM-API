@@ -84,9 +84,9 @@ export class AdminUniversitiesController {
         location: { city: 'Mexico City', state: 'CDMX', country: 'Mexico' },
         description: 'La máxima casa de estudios de México.',
         steamCareers: ['Ingeniería en Computación', 'Física', 'Matemáticas'],
-        tags: ['public', 'research', 'prestigious']
-      }
-    }
+        tags: ['public', 'research', 'prestigious'],
+      },
+    },
   })
   @Post()
   async createUniversity(@Body() data: any) {
@@ -101,9 +101,14 @@ export class AdminUniversitiesController {
     schema: {
       example: {
         description: 'Updated description for this university.',
-        steamCareers: ['Ingeniería en Computación', 'Física', 'Matemáticas', 'Biología']
-      }
-    }
+        steamCareers: [
+          'Ingeniería en Computación',
+          'Física',
+          'Matemáticas',
+          'Biología',
+        ],
+      },
+    },
   })
   @Put(':id')
   async updateUniversity(@Param('id') id: string, @Body() data: any) {

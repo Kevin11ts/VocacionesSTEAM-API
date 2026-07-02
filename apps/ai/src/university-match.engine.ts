@@ -179,9 +179,7 @@ export function applyFiltersAndSort(
     return true;
   };
   return matches
-    .filter(
-      (m) => m.distanceKm <= filters.maxDistanceKm && allowed(m.costTier),
-    )
+    .filter((m) => m.distanceKm <= filters.maxDistanceKm && allowed(m.costTier))
     .sort((a, b) => {
       if (b.matchScore !== a.matchScore) return b.matchScore - a.matchScore;
       const tierDiff =

@@ -84,10 +84,7 @@ export class UniversityMatchService {
     }
 
     // ── CAPA 1: candidatas deterministas dentro del radio máximo ─────────
-    const candidates = await this.buildCandidates(
-      request,
-      careers,
-    );
+    const candidates = await this.buildCandidates(request, careers);
     if (!candidates.length) {
       return { matches: [], generatedAt: new Date().toISOString() };
     }
@@ -118,8 +115,7 @@ export class UniversityMatchService {
         distanceKm: c.distanceKm,
         costTier: c.costTier,
         explanation:
-          adjustment?.explanation ||
-          this.deterministicExplanation(c),
+          adjustment?.explanation || this.deterministicExplanation(c),
         websiteUrl: c.websiteUrl,
         googleMapsData: { rating: c.rating, address: c.address },
         scoreAdjustmentReason: adjustment?.scoreAdjustmentReason,
@@ -384,9 +380,7 @@ export class UniversityMatchService {
         );
         return validated;
       } catch (error) {
-        this.logger.error(
-          `A8 falló con ${provider.name}: ${error.message}`,
-        );
+        this.logger.error(`A8 falló con ${provider.name}: ${error.message}`);
         await this.saveLog(
           userId,
           dominantAxes.join(' + '),

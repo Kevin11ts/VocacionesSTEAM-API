@@ -212,9 +212,7 @@ export function deriveBiasFlags(
   decisions: SimulatorDecisionInput[],
   steps: SimulatorStepForScoring[],
 ): SimulatorBiasFlags {
-  const too_fast = decisions.some(
-    (d) => Math.round(d.timeSpentMs / 1000) < 3,
-  );
+  const too_fast = decisions.some((d) => Math.round(d.timeSpentMs / 1000) < 3);
 
   const applicable = decisions.filter(
     (d) =>
@@ -329,7 +327,9 @@ export function computeSimulatorAffinity(
     Math.min(
       100,
       Math.round(
-        primaryScore * (0.7 + 0.3 * timeFactor) - biasDeduction - speedDeduction,
+        primaryScore * (0.7 + 0.3 * timeFactor) -
+          biasDeduction -
+          speedDeduction,
       ),
     ),
   );
@@ -390,9 +390,9 @@ function buildSimulatorFeedback(
     matematicas: 'MATEMÁTICAS',
   };
 
-  const sortedAxes = (Object.entries(steamScores) as [SteamAxis, number][]).sort(
-    ([, a], [, b]) => b - a,
-  );
+  const sortedAxes = (
+    Object.entries(steamScores) as [SteamAxis, number][]
+  ).sort(([, a], [, b]) => b - a);
   const strengthsDetected = sortedAxes
     .slice(0, 3)
     .filter(([, s]) => s > 0)
@@ -706,7 +706,10 @@ export const AFINIDAD_FACTOR = 0.85;
 export const AFINIDAD_OFFSET = 12;
 
 /** Entrada de catálogo de vocaciones (sin afinidad: se calcula en runtime). */
-export type VocationCatalogEntry = Omit<VocationRecommendation, 'affinity' | 'axis'>;
+export type VocationCatalogEntry = Omit<
+  VocationRecommendation,
+  'affinity' | 'axis'
+>;
 /** Entrada de catálogo de carreras (sin afinidad ni rationale). */
 export type CareerCatalogEntry = Omit<
   CareerRecommendation,

@@ -242,9 +242,7 @@ export class TestsController {
   }
 
   @MessagePattern({ cmd: 'tests.update-axis-meta' })
-  async updateAxisMeta(
-    @Payload() payload: { axis: SteamAxis; data: any },
-  ) {
+  async updateAxisMeta(@Payload() payload: { axis: SteamAxis; data: any }) {
     return this.catalogService.updateAxisMeta(payload.axis, payload.data);
   }
 }

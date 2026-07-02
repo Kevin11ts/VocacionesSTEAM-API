@@ -92,9 +92,7 @@ describe('A8 — Capa determinista del matching de universidades', () => {
 
     it('encuentra la carrera aunque cambien acentos y mayúsculas', () => {
       expect(
-        findOfferedCareer(uni, [
-          { careerName: 'ingenieria en software' },
-        ]),
+        findOfferedCareer(uni, [{ careerName: 'ingenieria en software' }]),
       ).toBe('ingenieria en software');
     });
 

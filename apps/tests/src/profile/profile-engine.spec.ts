@@ -517,10 +517,9 @@ describe('Motor vocacional — Vectores de prueba (mandato §13)', () => {
     });
 
     it('ignora respuestas sin pregunta u opción correspondiente', () => {
-      const raw = countAnswersByAxis(
-        { inexistente: 'A', q1: 'Z' },
-        [{ id: 'q1', options: [{ letter: 'A', steamTrait: 'ciencia' }] }],
-      );
+      const raw = countAnswersByAxis({ inexistente: 'A', q1: 'Z' }, [
+        { id: 'q1', options: [{ letter: 'A', steamTrait: 'ciencia' }] },
+      ]);
       expect(Object.values(raw).every((v) => v === 0)).toBe(true);
     });
   });
