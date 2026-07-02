@@ -38,11 +38,20 @@ import {
  *   universidades fuera de la lista se descartan. El resultado se cachea
  *   y los filtros (km, costo) se aplican sobre el caché al instante.
  */
+/** Nombre de proveedor con el que se cachea la degradación cuando la IA falla. */
+const DETERMINISTIC_FALLBACK_PROVIDER = 'deterministic-fallback';
+
+/** Cuánto dura el caché de un fallo de IA antes de reintentar (evita martillar un proveedor caído en cada click de filtro). */
+const FALLBACK_CACHE_TTL_MS = 3 * 60 * 1000;
+
+/** Máximo tiempo de espera por intento de proveedor antes de darlo por caído. */
+const PROVIDER_TIMEOUT_MS = 12_000;
+
 @Injectable()
 export class UniversityMatchService {
   private readonly logger = new Logger(UniversityMatchService.name);
-  private readonly gemini: GoogleGenerativeAI;
-  private readonly groq: Groq;
+  private readonly gemini: GoogleGenerativeAI | null;
+  private readonly groq: Groq | null;
 
   constructor(
     private readonly configService: ConfigService,
@@ -55,12 +64,24 @@ export class UniversityMatchService {
     @InjectRepository(AiLog)
     private readonly aiLogRepository: Repository<AiLog>,
   ) {
-    this.gemini = new GoogleGenerativeAI(
-      this.configService.get<string>('GEMINI_API_KEY_UNIS') || '',
-    );
-    this.groq = new Groq({
-      apiKey: this.configService.get<string>('GROQ_API_KEY') || '',
-    });
+    const geminiKey = this.configService.get<string>('GEMINI_API_KEY_UNIS');
+    const groqKey = this.configService.get<string>('GROQ_API_KEY');
+
+    // Gemini no tiene facturación configurada (confirmado): se instancia
+    // solo si hay clave, para no perder tiempo intentándolo a ciegas.
+    this.gemini = geminiKey ? new GoogleGenerativeAI(geminiKey) : null;
+    this.groq = groqKey ? new Groq({ apiKey: groqKey }) : null;
+
+    if (!groqKey) {
+      this.logger.error(
+        'CRITICAL: GROQ_API_KEY no está configurada. A8 responderá siempre con ranking determinista (sin explicación de IA).',
+      );
+    }
+    if (!geminiKey) {
+      this.logger.warn(
+        'GEMINI_API_KEY_UNIS no configurada: Gemini queda deshabilitado como fallback de A8.',
+      );
+    }
   }
 
   async matchUniversities(
@@ -327,7 +348,15 @@ export class UniversityMatchService {
     const row = await this.cacheRepository.findOne({
       where: { userId, cacheKey },
     });
-    return row?.aiAdjustments ?? null;
+    if (!row) return null;
+
+    // La degradación (IA caída) se cachea con TTL corto: pasado ese tiempo
+    // se reintenta por si el proveedor ya se recuperó.
+    if (row.provider === DETERMINISTIC_FALLBACK_PROVIDER) {
+      const ageMs = Date.now() - row.updatedAt.getTime();
+      if (ageMs > FALLBACK_CACHE_TTL_MS) return null;
+    }
+    return row.aiAdjustments;
   }
 
   private async requestAiAdjustments(
@@ -347,18 +376,37 @@ export class UniversityMatchService {
       request,
     );
 
+    // Groq primero: es el único proveedor con facturación activa hoy.
+    // Gemini queda como fallback opcional (se omite si no hay clave) y no
+    // debe bloquear la respuesta más de PROVIDER_TIMEOUT_MS.
     const providers: Array<{
       name: string;
+      enabled: boolean;
       call: () => Promise<{ text: string; tokens: number }>;
     }> = [
-      { name: 'Gemini', call: () => this.callGemini(prompt) },
-      { name: 'Groq', call: () => this.callGroq(prompt) },
+      { name: 'Groq', enabled: !!this.groq, call: () => this.callGroq(prompt) },
+      {
+        name: 'Gemini',
+        enabled: !!this.gemini,
+        call: () => this.callGemini(prompt),
+      },
     ];
 
     for (const provider of providers) {
+      if (!provider.enabled) {
+        this.logger.warn(
+          `A8: proveedor ${provider.name} deshabilitado (sin API key), se omite.`,
+        );
+        continue;
+      }
+
       const startTime = Date.now();
       try {
-        const { text, tokens } = await provider.call();
+        const { text, tokens } = await this.withTimeout(
+          provider.call(),
+          PROVIDER_TIMEOUT_MS,
+          provider.name,
+        );
         const cleaned = text.replace(/```json|```/g, '').trim();
         const parsed = JSON.parse(cleaned);
         const validated = validateAiMatches(parsed?.matches ?? [], candidates);
@@ -375,23 +423,17 @@ export class UniversityMatchService {
 
         // Cachear solo resultados exitosos: los filtros posteriores se
         // aplican sobre este caché sin volver a llamar a la IA.
-        await this.cacheRepository.save(
-          this.cacheRepository.create({
-            userId,
-            cacheKey,
-            aiAdjustments: validated,
-            provider: provider.name,
-          }),
-        );
+        await this.upsertCache(userId, cacheKey, validated, provider.name);
         return validated;
       } catch (error) {
-        this.logger.error(`A8 falló con ${provider.name}: ${error.message}`);
+        const detail = this.describeProviderError(error);
+        this.logger.error(`A8 falló con ${provider.name}: ${detail}`);
         await this.saveLog(
           userId,
           dominantAxes.join(' + '),
           Date.now() - startTime,
           false,
-          error.message,
+          detail,
           0,
           provider.name,
         );
@@ -399,13 +441,65 @@ export class UniversityMatchService {
     }
 
     // Degradación limpia: ranking 100% determinista (matchScore = baseScore).
+    // Se cachea con TTL corto (FALLBACK_CACHE_TTL_MS) para que los clicks de
+    // filtro no vuelvan a martillar un proveedor caído en cada request.
     this.logger.warn('A8 sin IA disponible: se responde solo con baseScore');
+    await this.upsertCache(userId, cacheKey, {}, DETERMINISTIC_FALLBACK_PROVIDER);
     return null;
+  }
+
+  /** Crea o actualiza la fila de caché para userId+cacheKey (evita duplicados). */
+  private async upsertCache(
+    userId: string,
+    cacheKey: string,
+    aiAdjustments: Record<string, ValidatedAiAdjustment>,
+    provider: string,
+  ): Promise<void> {
+    const existing = await this.cacheRepository.findOne({
+      where: { userId, cacheKey },
+    });
+    if (existing) {
+      existing.aiAdjustments = aiAdjustments;
+      existing.provider = provider;
+      await this.cacheRepository.save(existing);
+    } else {
+      await this.cacheRepository.save(
+        this.cacheRepository.create({ userId, cacheKey, aiAdjustments, provider }),
+      );
+    }
+  }
+
+  /** Corta una llamada a proveedor que tarde más de `ms` (evita cuelgues). */
+  private withTimeout<T>(promise: Promise<T>, ms: number, provider: string): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      const timer = setTimeout(
+        () => reject(new Error(`Timeout de ${ms}ms esperando a ${provider}`)),
+        ms,
+      );
+      promise.then(
+        (value) => {
+          clearTimeout(timer);
+          resolve(value);
+        },
+        (error) => {
+          clearTimeout(timer);
+          reject(error);
+        },
+      );
+    });
+  }
+
+  /** Extrae el detalle más útil de un error de SDK de IA (status/code + mensaje). */
+  private describeProviderError(error: any): string {
+    const status = error?.status ?? error?.response?.status ?? error?.code;
+    const message = error?.message || String(error);
+    return status ? `[${status}] ${message}` : message;
   }
 
   private async callGemini(
     prompt: string,
   ): Promise<{ text: string; tokens: number }> {
+    if (!this.gemini) throw new Error('Gemini no configurado (sin API key)');
     const model = this.gemini.getGenerativeModel({
       model: 'gemini-2.0-flash-lite',
       generationConfig: {
@@ -423,6 +517,7 @@ export class UniversityMatchService {
   private async callGroq(
     prompt: string,
   ): Promise<{ text: string; tokens: number }> {
+    if (!this.groq) throw new Error('Groq no configurado (sin API key)');
     const completion = await this.groq.chat.completions.create({
       model: 'llama-3.3-70b-versatile',
       messages: [{ role: 'user', content: prompt }],
