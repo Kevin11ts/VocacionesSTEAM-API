@@ -243,6 +243,33 @@ export class ProfileService {
     return profile;
   }
 
+  /**
+   * GET /simulator/results — resultados de simuladores del usuario (el
+   * intento más reciente por carrera), para que el catálogo muestre
+   * completados y scores en cualquier dispositivo.
+   */
+  async getSimulatorResults(userId: string) {
+    const rows = await this.userHistoryRepository.find({
+      where: { userId, activityType: SIMULATOR_ACTIVITY },
+      order: { createdAt: 'ASC' },
+    });
+    const bySlug = new Map<string, any>();
+    for (const row of rows) {
+      const affinity = row.results?.affinity;
+      if (affinity && typeof affinity.affinity === 'number') {
+        bySlug.set(row.activityId, {
+          careerSlug: row.activityId,
+          axis: affinity.axis,
+          affinity: affinity.affinity,
+          biasFlags: affinity.biasFlags ?? null,
+          feedback: row.results?.feedback ?? null,
+          completedAt: row.results?.completedAt ?? row.createdAt,
+        });
+      }
+    }
+    return [...bySlug.values()];
+  }
+
   // =========================================================================
   //  Carga de evidencia guardada
   // =========================================================================

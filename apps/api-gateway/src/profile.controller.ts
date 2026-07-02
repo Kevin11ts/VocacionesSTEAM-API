@@ -1,4 +1,4 @@
-import { Controller, Post, Body, Inject, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Body, Inject, UseGuards } from '@nestjs/common';
 import { ClientProxy } from '@nestjs/microservices';
 import {
   ApiTags,
@@ -96,6 +96,24 @@ export class SimulatorGatewayController {
   constructor(
     @Inject('TESTS_SERVICE') private readonly testsClient: ClientProxy,
   ) {}
+
+  @Get('results')
+  @ApiOperation({
+    summary:
+      'Resultados de simuladores del usuario (último intento por carrera)',
+  })
+  @ApiResponse({
+    status: 200,
+    description: '[{ careerSlug, axis, affinity, biasFlags, feedback, completedAt }]',
+  })
+  async getSimulatorResults(@CurrentUser() user: any) {
+    return lastValueFrom(
+      this.testsClient.send(
+        { cmd: 'tests.get-simulator-results' },
+        { userId: user.id },
+      ),
+    );
+  }
 
   @Post('submit')
   @ApiOperation({

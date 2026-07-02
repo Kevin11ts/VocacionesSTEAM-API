@@ -45,6 +45,11 @@ export class TestsController {
     );
   }
 
+  @MessagePattern({ cmd: 'tests.get-simulator-results' })
+  async getSimulatorResults(@Payload() payload: { userId: string }) {
+    return this.profileService.getSimulatorResults(payload.userId);
+  }
+
   @MessagePattern({ cmd: 'tests.submit-simulator' })
   async submitSimulatorAndRecompute(
     @Payload()
