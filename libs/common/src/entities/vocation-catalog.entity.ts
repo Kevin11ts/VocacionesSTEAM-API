@@ -17,7 +17,7 @@ export class VocationCatalogItem {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Column()
+  @Column({ type: 'varchar' })
   axis: SteamAxis;
 
   @Column()

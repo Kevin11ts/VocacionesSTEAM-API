@@ -9,7 +9,7 @@ import { SteamAxis } from '../types/vocational-profile.types';
  */
 @Entity('axis_meta')
 export class AxisMeta {
-  @PrimaryColumn()
+  @PrimaryColumn({ type: 'varchar' })
   axis: SteamAxis;
 
   @Column()
