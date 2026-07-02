@@ -112,9 +112,9 @@ export class UniversityMatchService {
 
     // ── CAPA 2: una llamada a la IA, cacheada ─────────────────────────────
     const cacheKey = this.buildCacheKey(request, careers, candidates);
-    let adjustments = await this.loadCachedAdjustments(userId, cacheKey);
-    if (!adjustments) {
-      adjustments = await this.requestAiAdjustments(
+    let aiResult = await this.loadCachedAdjustments(userId, cacheKey);
+    if (!aiResult) {
+      aiResult = await this.requestAiAdjustments(
         userId,
         candidates,
         careers,
@@ -124,6 +124,7 @@ export class UniversityMatchService {
         cacheKey,
       );
     }
+    const adjustments = aiResult?.adjustments ?? null;
 
     // ── Ensamble + filtros sobre el caché (sin IA) ────────────────────────
     const matches: UniversityMatch[] = candidates.map((c) => {
@@ -147,6 +148,10 @@ export class UniversityMatchService {
     return {
       matches: applyFiltersAndSort(matches, request.filters),
       generatedAt: new Date().toISOString(),
+      aiProvider:
+        aiResult && aiResult.provider !== DETERMINISTIC_FALLBACK_PROVIDER
+          ? aiResult.provider
+          : 'deterministic',
     };
   }
 
@@ -344,7 +349,10 @@ export class UniversityMatchService {
   private async loadCachedAdjustments(
     userId: string,
     cacheKey: string,
-  ): Promise<Record<string, ValidatedAiAdjustment> | null> {
+  ): Promise<{
+    adjustments: Record<string, ValidatedAiAdjustment>;
+    provider: string;
+  } | null> {
     const row = await this.cacheRepository.findOne({
       where: { userId, cacheKey },
     });
@@ -356,7 +364,7 @@ export class UniversityMatchService {
       const ageMs = Date.now() - row.updatedAt.getTime();
       if (ageMs > FALLBACK_CACHE_TTL_MS) return null;
     }
-    return row.aiAdjustments;
+    return { adjustments: row.aiAdjustments, provider: row.provider };
   }
 
   private async requestAiAdjustments(
@@ -367,7 +375,10 @@ export class UniversityMatchService {
     calibrationLevel: number,
     request: UniversityMatchRequest,
     cacheKey: string,
-  ): Promise<Record<string, ValidatedAiAdjustment> | null> {
+  ): Promise<{
+    adjustments: Record<string, ValidatedAiAdjustment>;
+    provider: string;
+  } | null> {
     const prompt = this.buildPrompt(
       candidates,
       careers,
@@ -424,7 +435,7 @@ export class UniversityMatchService {
         // Cachear solo resultados exitosos: los filtros posteriores se
         // aplican sobre este caché sin volver a llamar a la IA.
         await this.upsertCache(userId, cacheKey, validated, provider.name);
-        return validated;
+        return { adjustments: validated, provider: provider.name };
       } catch (error) {
         const detail = this.describeProviderError(error);
         this.logger.error(`A8 falló con ${provider.name}: ${detail}`);

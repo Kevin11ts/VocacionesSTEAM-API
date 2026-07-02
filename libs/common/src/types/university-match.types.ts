@@ -64,4 +64,10 @@ export interface UniversityMatch {
 export interface UniversityMatchResponse {
   matches: UniversityMatch[];
   generatedAt: string;
+  /**
+   * Origen del ranking fino: 'Groq' | 'Gemini' cuando la IA explicó los
+   * matches, o 'deterministic' si se degradó a baseScore puro (IA caída
+   * o sin API key). Observabilidad para frontend y soporte.
+   */
+  aiProvider?: string;
 }
