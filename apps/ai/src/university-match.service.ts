@@ -127,13 +127,23 @@ export class UniversityMatchService {
     const adjustments = aiResult?.adjustments ?? null;
 
     // ── Ensamble + filtros sobre el caché (sin IA) ────────────────────────
+    // El ajuste de la IA se guardó como score sobre el baseScore NEUTRAL;
+    // aquí se traduce a delta y se aplica sobre el baseScore con la
+    // preferencia de costo real del request (filtros instantáneos).
     const matches: UniversityMatch[] = candidates.map((c) => {
       const adjustment = adjustments?.[c.universityId];
+      const basePref = computeBaseScore({
+        distanceKm: c.distanceKm,
+        costTier: c.costTier,
+        costPreference: request.filters.costPreference,
+        rating: c.rating,
+      });
+      const aiDelta = adjustment ? adjustment.matchScore - c.baseScore : 0;
       return {
         universityId: c.universityId,
         name: c.name,
         matchedCareer: c.offersCareer,
-        matchScore: adjustment?.matchScore ?? c.baseScore,
+        matchScore: Math.max(0, Math.min(100, basePref + aiDelta)),
         distanceKm: c.distanceKm,
         costTier: c.costTier,
         explanation:
@@ -240,10 +250,14 @@ export class UniversityMatchService {
         tuitionRange: university.tuitionRange ?? 'información no disponible',
         rating,
         modality: university.modality ?? 'información no disponible',
+        // baseScore NEUTRAL (preferencia 'any'): es lo que ve la IA y lo
+        // que ancla el cacheKey. Así cambiar el filtro de costo NO invalida
+        // el caché ni re-llama a la IA; el bono por preferencia se aplica
+        // como delta al ensamblar la respuesta.
         baseScore: computeBaseScore({
           distanceKm,
           costTier,
-          costPreference: request.filters.costPreference,
+          costPreference: 'any',
           rating,
         }),
         websiteUrl: university.website ?? undefined,
