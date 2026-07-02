@@ -62,7 +62,7 @@ export class ComplementaryTestsController {
       this.testsClient.send(
         { cmd: 'tests.submit-complementary-test' },
         {
-          userId: req.user.userId,
+          userId: req.user.id,
           testId,
           answers: data.answers,
         },
@@ -93,10 +93,23 @@ export class ComplementaryTestsController {
       this.testsClient.send(
         { cmd: 'tests.submit-calibration' },
         {
-          userId: req.user.userId,
+          userId: req.user.id,
           moduleId: data.moduleId,
           answers: data.answers,
         },
+      ),
+    );
+  }
+
+  @ApiOperation({ summary: 'Get calibration answers for the logged-in user' })
+  @ApiResponse({ status: 200, description: 'Returns calibration answers' })
+  @Get('calibration/me')
+  @UseGuards(JwtAuthGuard)
+  async getMyCalibration(@Request() req: any) {
+    return lastValueFrom(
+      this.testsClient.send(
+        { cmd: 'tests.get-calibration' },
+        { userId: req.user.id },
       ),
     );
   }
@@ -109,19 +122,6 @@ export class ComplementaryTestsController {
   async getCalibration(@Param('userId') userId: string) {
     return lastValueFrom(
       this.testsClient.send({ cmd: 'tests.get-calibration' }, { userId }),
-    );
-  }
-
-  @ApiOperation({ summary: 'Get calibration answers for the logged-in user' })
-  @ApiResponse({ status: 200, description: 'Returns calibration answers' })
-  @Get('calibration/me')
-  @UseGuards(JwtAuthGuard)
-  async getMyCalibration(@Request() req: any) {
-    return lastValueFrom(
-      this.testsClient.send(
-        { cmd: 'tests.get-calibration' },
-        { userId: req.user.userId },
-      ),
     );
   }
 }
