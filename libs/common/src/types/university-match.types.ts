@@ -41,6 +41,8 @@ export interface UniversityCandidate {
   baseScore: number;
   websiteUrl?: string;
   address?: string;
+  /** Coordenadas de la universidad (para el mapa del frontend). */
+  location?: { lat: number; lng: number };
 }
 
 export interface UniversityMatch {
@@ -53,6 +55,8 @@ export interface UniversityMatch {
   explanation: string;
   websiteUrl?: string;
   googleMapsData?: { rating?: number; address?: string };
+  /** Coordenadas de la universidad (para el mapa del frontend). */
+  location?: { lat: number; lng: number };
   /** Justificación del ajuste de la IA sobre el baseScore (±10 máx). */
   scoreAdjustmentReason?: string;
 }

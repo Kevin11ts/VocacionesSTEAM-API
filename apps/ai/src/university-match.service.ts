@@ -118,6 +118,7 @@ export class UniversityMatchService {
           adjustment?.explanation || this.deterministicExplanation(c),
         websiteUrl: c.websiteUrl,
         googleMapsData: { rating: c.rating, address: c.address },
+        location: c.location,
         scoreAdjustmentReason: adjustment?.scoreAdjustmentReason,
       };
     });
@@ -221,6 +222,10 @@ export class UniversityMatchService {
         }),
         websiteUrl: university.website ?? undefined,
         address: university.address ?? undefined,
+        location: {
+          lat: university.location.latitude,
+          lng: university.location.longitude,
+        },
       });
     }
     return candidates;
