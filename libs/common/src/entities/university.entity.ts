@@ -28,7 +28,7 @@ export class University {
   steamPrograms: { name: string; area: string }[];
 
   /** Dato duro para A8: public | affordable | private-premium. */
-  @Column({ nullable: true })
+  @Column({ type: 'varchar', nullable: true })
   costTier: CostTier;
 
   /** Rango de colegiatura legible (contexto para la IA, no se inventa). */
