@@ -142,6 +142,7 @@ export class TestsService {
       answers: test.answers,
       aiProfileDescription: test.recommendation?.aiGeneralAdvice,
       recommendations: test.recommendation?.universities,
+      profile: test.profile ?? null,
     };
   }
 
@@ -162,6 +163,7 @@ export class TestsService {
       answers: test.answers,
       aiProfileDescription: test.recommendation?.aiGeneralAdvice,
       recommendations: test.recommendation?.universities,
+      profile: test.profile ?? null,
     };
   }
 
