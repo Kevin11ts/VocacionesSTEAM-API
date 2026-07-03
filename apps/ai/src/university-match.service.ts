@@ -544,7 +544,7 @@ export class UniversityMatchService {
   ): Promise<{ text: string; tokens: number }> {
     if (!this.groq) throw new Error('Groq no configurado (sin API key)');
     const completion = await this.groq.chat.completions.create({
-      model: 'llama-3.3-70b-versatile',
+      model: 'qwen-3.6-27b',
       messages: [{ role: 'user', content: prompt }],
       temperature: 0.2,
       response_format: { type: 'json_object' },
@@ -627,11 +627,12 @@ SALIDA (JSON estricto, sin texto extra):
     {
       "universityId": "uuid",
       "matchScore": 88,
-      "explanation": "Explicación de 2-3 frases basada solo en los datos de la lista.",
-      "scoreAdjustmentReason": "Justificación del ajuste aplicado sobre el baseScore"
+      "explanation": "Ofrece exactamente Ingeniería en Software, es pública y está a 12 km de ti. Su rating de 4.5 y modalidad presencial encajan con tu preferencia de opción accesible.",
+      "scoreAdjustmentReason": "+4 por coincidencia con preferencia económica y cercanía"
     }
   ]
-}`;
+}
+    `;
   }
 
   private async saveLog(
