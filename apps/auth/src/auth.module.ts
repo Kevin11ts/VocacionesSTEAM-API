@@ -32,7 +32,13 @@ import { ClientsModule, Transport } from '@nestjs/microservices';
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({
         secret: config.get<string>('JWT_SECRET'),
-        signOptions: { expiresIn: '15m' },
+        // Access token de 1h: reduce ~4x la frecuencia de refresh (antes 15m)
+        // y por ende las ventanas donde un blip de red podía cerrar sesión.
+        // El refresh token sigue durando 7d (ver generateTokens).
+        signOptions: {
+          expiresIn: (config.get<string>('JWT_ACCESS_EXPIRATION') ||
+            '1h') as any,
+        },
       }),
     }),
     ClientsModule.registerAsync([
