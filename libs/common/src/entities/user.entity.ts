@@ -54,6 +54,15 @@ export class User {
   @Column({ nullable: true })
   linkedin?: string;
 
+  // --- Consentimiento legal (Aviso de Privacidad + Términos) ---
+  /** Versión de los documentos legales aceptada por el usuario. */
+  @Column({ nullable: true })
+  acceptedTermsVersion?: string;
+
+  /** Momento en que el usuario otorgó su consentimiento. */
+  @Column({ type: 'timestamp', nullable: true })
+  acceptedTermsAt?: Date | null;
+
   @Column({ default: false })
   isEmailVerified: boolean;
 

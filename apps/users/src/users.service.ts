@@ -131,6 +131,23 @@ export class UsersService {
     return { message: 'Perfil actualizado', user: safeUser };
   }
 
+  /** Registra la aceptación del Aviso de Privacidad y los Términos. */
+  async acceptTerms(userId: string, version: string) {
+    const user = await this.userRepository.findOne({ where: { id: userId } });
+    if (!user) throw new RpcException('User not found');
+
+    user.acceptedTermsVersion = version;
+    user.acceptedTermsAt = new Date();
+    const saved = await this.userRepository.save(user);
+    const { password, ...safeUser } = saved;
+    return {
+      message: 'Consentimiento registrado',
+      acceptedTermsVersion: saved.acceptedTermsVersion,
+      acceptedTermsAt: saved.acceptedTermsAt,
+      user: safeUser,
+    };
+  }
+
   async updateSettings(userId: string, settingsDto: Partial<UserSettings>) {
     const user = await this.userRepository.findOne({
       where: { id: userId },

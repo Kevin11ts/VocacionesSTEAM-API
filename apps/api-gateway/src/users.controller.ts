@@ -26,6 +26,7 @@ import {
   UpdateProfileDto,
   ChangePasswordDto,
   UpdateUserSettingsDto,
+  AcceptTermsDto,
 } from '@app/common';
 import { Roles } from './decorators/roles.decorator';
 import { CurrentUser } from './decorators/current-user.decorator';
@@ -65,6 +66,19 @@ export class UsersGatewayController {
       this.usersClient.send(
         { cmd: 'users.update-own-profile' },
         { userId: user.id, data },
+      ),
+    );
+  }
+
+  @Post('accept-terms')
+  @ApiOperation({ summary: 'Register acceptance of privacy policy and terms' })
+  @ApiBody({ type: AcceptTermsDto })
+  @ApiResponse({ status: 201, description: 'Consent recorded' })
+  async acceptTerms(@CurrentUser() user: any, @Body() data: AcceptTermsDto) {
+    return lastValueFrom(
+      this.usersClient.send(
+        { cmd: 'users.accept-terms' },
+        { userId: user.id, version: data.version },
       ),
     );
   }

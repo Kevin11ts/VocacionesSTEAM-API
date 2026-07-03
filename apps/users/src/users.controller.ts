@@ -26,6 +26,13 @@ export class UsersController {
     return this.usersService.updateOwnProfile(payload.userId, payload.data);
   }
 
+  @MessagePattern({ cmd: 'users.accept-terms' })
+  async acceptTerms(
+    @Payload() payload: { userId: string; version: string },
+  ) {
+    return this.usersService.acceptTerms(payload.userId, payload.version);
+  }
+
   @MessagePattern({ cmd: 'users.update-settings' })
   async updateSettings(
     @Payload() payload: { userId: string; settings: Partial<UserSettings> },

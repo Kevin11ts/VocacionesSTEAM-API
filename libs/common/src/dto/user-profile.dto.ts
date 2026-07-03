@@ -53,6 +53,14 @@ export class UpdateProfileDto {
   linkedin?: string;
 }
 
+/** POST /users/accept-terms — registro de consentimiento legal. */
+export class AcceptTermsDto {
+  @ApiProperty({ example: '2026-07-03', description: 'Versión de los documentos legales aceptada' })
+  @IsString()
+  @MaxLength(40)
+  version: string;
+}
+
 /** PUT /users/password — cambio de contraseña autenticado. */
 export class ChangePasswordDto {
   @ApiProperty({ example: 'miPasswordActual' })
