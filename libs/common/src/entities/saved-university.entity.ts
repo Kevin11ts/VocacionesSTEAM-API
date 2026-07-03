@@ -39,6 +39,17 @@ export class SavedUniversity {
   @Column({ nullable: true })
   officialWebsite: string;
 
+  /** Coordenadas reales de la universidad, para poder mostrarla en el mapa. */
+  @Column({ type: 'double precision', nullable: true })
+  latitude: number | null;
+
+  @Column({ type: 'double precision', nullable: true })
+  longitude: number | null;
+
+  /** Rating de Google (0-5) al momento de guardar, si estaba disponible. */
+  @Column({ type: 'double precision', nullable: true })
+  rating: number | null;
+
   @CreateDateColumn()
   createdAt: Date;
 

@@ -188,6 +188,20 @@ export class UsersService {
     const user = await this.userRepository.findOne({ where: { id: userId } });
     if (!user) throw new RpcException('User not found');
 
+    // Evita duplicados: la misma universidad (por nombre, sin distinguir
+    // mayúsculas) no puede guardarse dos veces para el mismo usuario.
+    const existing = await this.savedUniversityRepository
+      .createQueryBuilder('saved')
+      .innerJoin('saved.user', 'owner')
+      .where('owner.id = :userId', { userId })
+      .andWhere('LOWER(saved.universityName) = LOWER(:name)', {
+        name: (data.universityName || '').trim(),
+      })
+      .getOne();
+    if (existing) {
+      throw new RpcException('University already saved');
+    }
+
     const savedUniversity = this.savedUniversityRepository.create({
       ...data,
       user,

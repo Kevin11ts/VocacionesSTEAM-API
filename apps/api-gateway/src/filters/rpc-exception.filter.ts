@@ -55,6 +55,8 @@ export class RpcToHttpExceptionFilter {
       'Test not found': HttpStatus.NOT_FOUND,
       'Simulator not found': HttpStatus.NOT_FOUND,
       'Question not found': HttpStatus.NOT_FOUND,
+      'Saved university not found': HttpStatus.NOT_FOUND,
+      'University already saved': HttpStatus.CONFLICT,
       'Credenciales inválidas': HttpStatus.UNAUTHORIZED,
       'El correo no está verificado': HttpStatus.FORBIDDEN,
       'No autorizado': HttpStatus.UNAUTHORIZED,

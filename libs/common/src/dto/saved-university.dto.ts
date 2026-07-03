@@ -1,4 +1,4 @@
-import { IsString, IsOptional } from 'class-validator';
+import { IsString, IsOptional, IsNumber, Min, Max } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 
 export class CreateSavedUniversityDto {
@@ -47,4 +47,33 @@ export class CreateSavedUniversityDto {
   @IsString()
   @IsOptional()
   officialWebsite?: string;
+
+  @ApiProperty({
+    example: 19.4326,
+    required: false,
+    description: 'Latitud real de la universidad, para mostrarla en el mapa',
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(-90)
+  @Max(90)
+  latitude?: number;
+
+  @ApiProperty({
+    example: -99.1332,
+    required: false,
+    description: 'Longitud real de la universidad, para mostrarla en el mapa',
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(-180)
+  @Max(180)
+  longitude?: number;
+
+  @ApiProperty({ example: 4.5, required: false })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(5)
+  rating?: number;
 }
