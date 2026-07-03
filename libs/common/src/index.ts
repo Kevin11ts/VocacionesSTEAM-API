@@ -25,6 +25,7 @@ export * from './types/university-match.types';
 export * from './entities/university-match-cache.entity';
 
 export * from './dto/auth.dto';
+export * from './dto/user-profile.dto';
 export * from './dto/test.dto';
 export * from './dto/profile.dto';
 export * from './dto/university-match.dto';

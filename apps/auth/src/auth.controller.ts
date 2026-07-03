@@ -28,6 +28,18 @@ export class AuthController {
     return this.authService.login(payload);
   }
 
+  @MessagePattern({ cmd: 'auth.change-password' })
+  async changePassword(
+    @Payload()
+    payload: {
+      userId: string;
+      currentPassword: string;
+      newPassword: string;
+    },
+  ) {
+    return this.authService.changePassword(payload);
+  }
+
   @MessagePattern({ cmd: 'auth.oauth-login' })
   async oauthLogin(
     @Payload()

@@ -19,6 +19,13 @@ export class UsersController {
     return this.usersService.updateAvatar(payload.userId, payload.avatarUrl);
   }
 
+  @MessagePattern({ cmd: 'users.update-own-profile' })
+  async updateOwnProfile(
+    @Payload() payload: { userId: string; data: any },
+  ) {
+    return this.usersService.updateOwnProfile(payload.userId, payload.data);
+  }
+
   @MessagePattern({ cmd: 'users.update-settings' })
   async updateSettings(
     @Payload() payload: { userId: string; settings: Partial<UserSettings> },

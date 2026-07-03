@@ -20,7 +20,13 @@ import {
 } from '@nestjs/swagger';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { RolesGuard } from './guards/roles.guard';
-import { CreateSavedUniversityDto, CreateSavedCourseDto } from '@app/common';
+import {
+  CreateSavedUniversityDto,
+  CreateSavedCourseDto,
+  UpdateProfileDto,
+  ChangePasswordDto,
+  UpdateUserSettingsDto,
+} from '@app/common';
 import { Roles } from './decorators/roles.decorator';
 import { CurrentUser } from './decorators/current-user.decorator';
 import { lastValueFrom } from 'rxjs';
@@ -32,6 +38,7 @@ import { lastValueFrom } from 'rxjs';
 export class UsersGatewayController {
   constructor(
     @Inject('USERS_SERVICE') private readonly usersClient: ClientProxy,
+    @Inject('AUTH_SERVICE') private readonly authClient: ClientProxy,
   ) {}
 
   @Get('profile')
@@ -43,6 +50,42 @@ export class UsersGatewayController {
   async getProfile(@CurrentUser() user: any) {
     return lastValueFrom(
       this.usersClient.send({ cmd: 'users.get-profile' }, user.id),
+    );
+  }
+
+  @Put('profile')
+  @ApiOperation({ summary: 'Update own profile (name and personal details)' })
+  @ApiBody({ type: UpdateProfileDto })
+  @ApiResponse({ status: 200, description: 'Profile updated' })
+  async updateOwnProfile(
+    @CurrentUser() user: any,
+    @Body() data: UpdateProfileDto,
+  ) {
+    return lastValueFrom(
+      this.usersClient.send(
+        { cmd: 'users.update-own-profile' },
+        { userId: user.id, data },
+      ),
+    );
+  }
+
+  @Put('password')
+  @ApiOperation({ summary: 'Change own password (authenticated)' })
+  @ApiBody({ type: ChangePasswordDto })
+  @ApiResponse({ status: 200, description: 'Password changed' })
+  async changePassword(
+    @CurrentUser() user: any,
+    @Body() data: ChangePasswordDto,
+  ) {
+    return lastValueFrom(
+      this.authClient.send(
+        { cmd: 'auth.change-password' },
+        {
+          userId: user.id,
+          currentPassword: data.currentPassword,
+          newPassword: data.newPassword,
+        },
+      ),
     );
   }
 
@@ -66,17 +109,12 @@ export class UsersGatewayController {
   }
 
   @Put('settings')
-  @ApiOperation({ summary: 'Update user settings' })
-  @ApiBody({
-    schema: {
-      example: {
-        theme: 'dark',
-        notificationsEnabled: true,
-        language: 'es'
-      }
-    }
-  })
-  async updateSettings(@CurrentUser() user: any, @Body() settings: any) {
+  @ApiOperation({ summary: 'Update user settings (theme, language, notifications)' })
+  @ApiBody({ type: UpdateUserSettingsDto })
+  async updateSettings(
+    @CurrentUser() user: any,
+    @Body() settings: UpdateUserSettingsDto,
+  ) {
     return lastValueFrom(
       this.usersClient.send(
         { cmd: 'users.update-settings' },

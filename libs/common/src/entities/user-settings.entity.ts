@@ -22,9 +22,26 @@ export class UserSettings {
   @Column({ default: 'Español' })
   language: string = 'Español';
 
+  // --- Canales de notificación ---
   @Column({ default: true })
   pushEnabled: boolean = true;
 
+  @Column({ default: true })
+  emailEnabled: boolean = true;
+
   @Column({ default: false })
   emailMarketing: boolean = false;
+
+  // --- Categorías de notificación ---
+  @Column({ default: true })
+  weeklySummary: boolean = true;
+
+  @Column({ default: true })
+  newCareersAlerts: boolean = true;
+
+  @Column({ default: true })
+  testReminders: boolean = true;
+
+  @Column({ default: false })
+  communityMessages: boolean = false;
 }

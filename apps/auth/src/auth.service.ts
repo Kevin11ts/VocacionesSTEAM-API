@@ -205,6 +205,48 @@ export class AuthService {
     return { message: 'Contraseña actualizada exitosamente' };
   }
 
+  /**
+   * Cambio de contraseña de un usuario autenticado: verifica la contraseña
+   * actual, guarda la nueva hasheada e invalida los refresh tokens (fuerza
+   * re-login en otros dispositivos como medida de seguridad).
+   */
+  async changePassword(data: {
+    userId: string;
+    currentPassword: string;
+    newPassword: string;
+  }) {
+    const user = await this.userRepository.findOne({
+      where: { id: data.userId },
+    });
+    if (!user) throw new RpcException('Usuario no encontrado');
+
+    // Cuentas creadas por Google OAuth pueden no tener contraseña local.
+    if (!user.password) {
+      throw new RpcException(
+        'Tu cuenta usa inicio de sesión con Google. No tiene contraseña que cambiar.',
+      );
+    }
+
+    const isMatch = await bcrypt.compare(data.currentPassword, user.password);
+    if (!isMatch) {
+      throw new RpcException('La contraseña actual es incorrecta');
+    }
+
+    const sameAsOld = await bcrypt.compare(data.newPassword, user.password);
+    if (sameAsOld) {
+      throw new RpcException(
+        'La nueva contraseña debe ser distinta a la actual',
+      );
+    }
+
+    user.password = await bcrypt.hash(data.newPassword, 10);
+    // Invalidar sesiones existentes: el refresh token deja de ser válido.
+    user.hashedRefreshToken = null as any;
+    await this.userRepository.save(user);
+
+    return { message: 'Contraseña actualizada exitosamente' };
+  }
+
   private async generateAndSendOtp(
     email: string,
     purpose: 'register' | 'recovery' | 'login',

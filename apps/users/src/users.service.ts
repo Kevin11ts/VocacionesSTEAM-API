@@ -85,7 +85,50 @@ export class UsersService {
     if (!user) throw new RpcException('User not found');
 
     user.avatarUrl = avatarUrl;
-    return this.userRepository.save(user);
+    const saved = await this.userRepository.save(user);
+    const { password, ...safeUser } = saved;
+    return safeUser;
+  }
+
+  /**
+   * Actualiza los datos del propio perfil. Solo se permiten campos no
+   * sensibles (whitelist): nunca role, email, password ni nivel de acceso.
+   */
+  async updateOwnProfile(
+    userId: string,
+    data: {
+      fullname?: string;
+      bio?: string;
+      birthDate?: string;
+      phone?: string;
+      location?: string;
+      github?: string;
+      linkedin?: string;
+    },
+  ) {
+    const user = await this.userRepository.findOne({ where: { id: userId } });
+    if (!user) throw new RpcException('User not found');
+
+    const allowed: (keyof typeof data)[] = [
+      'fullname',
+      'bio',
+      'birthDate',
+      'phone',
+      'location',
+      'github',
+      'linkedin',
+    ];
+    for (const key of allowed) {
+      const value = data[key];
+      if (value !== undefined) {
+        (user as any)[key] =
+          typeof value === 'string' ? value.trim() : value;
+      }
+    }
+
+    const saved = await this.userRepository.save(user);
+    const { password, ...safeUser } = saved;
+    return { message: 'Perfil actualizado', user: safeUser };
   }
 
   async updateSettings(userId: string, settingsDto: Partial<UserSettings>) {
@@ -95,7 +138,27 @@ export class UsersService {
     });
     if (!user) throw new RpcException('User not found');
 
-    const updatedSettings = Object.assign(user.settings, settingsDto);
+    // Whitelist: solo columnas conocidas de UserSettings (evita inyectar
+    // claves arbitrarias enviadas por el cliente).
+    const allowed: (keyof UserSettings)[] = [
+      'darkMode',
+      'language',
+      'pushEnabled',
+      'emailEnabled',
+      'emailMarketing',
+      'weeklySummary',
+      'newCareersAlerts',
+      'testReminders',
+      'communityMessages',
+    ];
+    const clean: Partial<UserSettings> = {};
+    for (const key of allowed) {
+      if (settingsDto[key] !== undefined) {
+        (clean as any)[key] = settingsDto[key];
+      }
+    }
+
+    const updatedSettings = Object.assign(user.settings, clean);
     user.settings = await this.settingsRepository.save(updatedSettings);
 
     const { password, ...safeUser } = user;

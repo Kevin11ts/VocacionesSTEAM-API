@@ -35,8 +35,24 @@ export class User {
   @Column({ default: 'Explorador STEAM' })
   title: string;
 
-  @Column({ default: 1 })
-  level: number;
+  // --- Datos de perfil editables por el usuario ---
+  @Column({ type: 'text', nullable: true })
+  bio?: string;
+
+  @Column({ nullable: true })
+  birthDate?: string;
+
+  @Column({ nullable: true })
+  phone?: string;
+
+  @Column({ nullable: true })
+  location?: string;
+
+  @Column({ nullable: true })
+  github?: string;
+
+  @Column({ nullable: true })
+  linkedin?: string;
 
   @Column({ default: false })
   isEmailVerified: boolean;
