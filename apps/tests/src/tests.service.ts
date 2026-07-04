@@ -284,6 +284,19 @@ export class TestsService {
     const user = await this.userRepository.findOne({ where: { id: userId } });
     if (!user) throw new RpcException('User not found');
 
+    // El frontend solo ofrece esta ruta tras completar el test vocacional
+    // (missionUnlockGuard), pero eso es una gate puramente de UX: hay que
+    // exigirlo también aquí, o cualquier usuario autenticado podría enviar
+    // calibración directamente vía API sin haber hecho el test base.
+    const hasCompletedTheoreticalTest = await this.testsRepository.exist({
+      where: { user: { id: userId } },
+    });
+    if (!hasCompletedTheoreticalTest) {
+      throw new RpcException(
+        'Debes completar el test vocacional antes de acceder a la calibración.',
+      );
+    }
+
     let calibration = await this.calibrationRepository.findOne({
       where: { user: { id: userId }, moduleId },
     });

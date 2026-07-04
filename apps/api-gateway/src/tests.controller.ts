@@ -22,6 +22,8 @@ import {
   ApiParam,
 } from '@nestjs/swagger';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
+import { RolesGuard } from './guards/roles.guard';
+import { Roles } from './decorators/roles.decorator';
 import { CurrentUser } from './decorators/current-user.decorator';
 import { lastValueFrom } from 'rxjs';
 import {
@@ -69,6 +71,8 @@ export class TestsGatewayController {
   }
 
   @Post('questions')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('admin')
   @ApiOperation({ summary: 'Create a new test question' })
   @ApiResponse({ status: 201, description: 'Question created' })
   @ApiBody({ type: CreateQuestionDto })
@@ -79,6 +83,8 @@ export class TestsGatewayController {
   }
 
   @Post('questions/bulk')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('admin')
   @ApiOperation({ summary: 'Create multiple questions at once' })
   @ApiResponse({ status: 201, description: 'Questions created successfully' })
   @ApiBody({ type: CreateBulkQuestionsDto })
@@ -92,6 +98,8 @@ export class TestsGatewayController {
   }
 
   @Put('questions/:id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('admin')
   @ApiOperation({ summary: 'Update an existing test question' })
   @ApiResponse({ status: 200, description: 'Question updated' })
   @ApiParam({ name: 'id', description: 'Question UUID' })
@@ -106,6 +114,8 @@ export class TestsGatewayController {
   }
 
   @Delete('questions/:id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('admin')
   @ApiOperation({ summary: 'Delete a test question' })
   @ApiResponse({ status: 200, description: 'Question deleted' })
   @ApiParam({ name: 'id', description: 'Question UUID' })
