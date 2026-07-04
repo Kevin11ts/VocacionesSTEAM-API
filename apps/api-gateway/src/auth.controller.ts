@@ -127,7 +127,12 @@ export class AuthGatewayController {
       'https://steamvocations.app/oauth-callback',
     );
 
-    return res.redirect(`${frontendUrl}?token=${oauthRes.accessToken}`);
+    // Los tokens van en el fragmento (#), no en el query string: el fragmento
+    // nunca se envía al servidor (ni queda en logs de acceso ni en el header
+    // Referer de terceros), a diferencia de un query param.
+    return res.redirect(
+      `${frontendUrl}#token=${oauthRes.accessToken}&refreshToken=${oauthRes.refreshToken}`,
+    );
   }
 
   @Post('refresh')
