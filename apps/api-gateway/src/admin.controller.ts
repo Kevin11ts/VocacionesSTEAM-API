@@ -16,21 +16,10 @@ export class AdminStatsController {
 
   @Get()
   async getStats() {
-    // We could ask microservices for stats and aggregate them.
-    // For simplicity, we assume usersClient can provide total users,
-    // and testsClient could provide simulations completed.
-    // But since UserHistory is in testsClient, we should ask testsClient.
-
-    // In a real scenario, we'd add methods to the microservices.
-    // For now, let's just return a mock or call a new microservice method.
-    // Since we didn't implement the aggregation in microservice yet,
-    // we'll return a stub to fulfill the API requirement structure.
-    return {
-      totalUsers: 0,
-      totalSimulations: 0,
-      mostPopularAffinity: 'Tecnología',
-      message:
-        'Not fully implemented yet, requires microservices stats aggregation.',
-    };
+    // El microservicio de tests tiene acceso a usuarios, tests, simuladores
+    // y preguntas: agrega ahí todas las métricas reales del dashboard.
+    return lastValueFrom(
+      this.testsClient.send({ cmd: 'tests.admin-stats' }, {}),
+    );
   }
 }

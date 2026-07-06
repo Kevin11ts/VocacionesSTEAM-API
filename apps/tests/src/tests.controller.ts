@@ -210,6 +210,11 @@ export class TestsController {
     return this.testsService.getCalibration(payload.userId);
   }
 
+  @MessagePattern({ cmd: 'tests.admin-stats' })
+  async getAdminStats() {
+    return this.testsService.getAdminStats();
+  }
+
   // --- Catálogos de vocaciones/carreras (A6/A7) ---
   @MessagePattern({ cmd: 'tests.get-catalogs' })
   async getCatalogs() {

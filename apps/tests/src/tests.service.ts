@@ -319,4 +319,88 @@ export class TestsService {
       select: ['moduleId', 'answers', 'updatedAt'],
     });
   }
+
+  /**
+   * Métricas reales para el dashboard del admin: totales, actividad reciente,
+   * y distribución de perfiles STEAM calculada sobre los tests completados.
+   */
+  async getAdminStats() {
+    const AXES = ['ciencia', 'tecnologia', 'ingenieria', 'artes', 'matematicas'];
+    const now = new Date();
+    const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const monthAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+
+    const [users, tests, totalSimulators, totalQuestions] = await Promise.all([
+      this.userRepository.find({ select: ['id', 'fullname', 'email', 'role', 'createdAt', 'isBanned', 'suspendedUntil'] }),
+      this.testsRepository.find({ relations: ['user'] }),
+      this.careerSimulatorRepository.count(),
+      this.questionRepository.count(),
+    ]);
+
+    const totalUsers = users.length;
+    const totalAdmins = users.filter((u) => u.role === 'admin').length;
+    const totalStudents = totalUsers - totalAdmins;
+    const moderatedCount = users.filter(
+      (u) => u.isBanned || (u.suspendedUntil && new Date(u.suspendedUntil) > now),
+    ).length;
+
+    const totalTests = tests.length;
+    const testsThisWeek = tests.filter((t) => t.completedAt && new Date(t.completedAt) >= weekAgo).length;
+    const testsThisMonth = tests.filter((t) => t.completedAt && new Date(t.completedAt) >= monthAgo).length;
+
+    // Distribución: eje dominante de cada test completado.
+    const distribution: Record<string, number> = {
+      ciencia: 0, tecnologia: 0, ingenieria: 0, artes: 0, matematicas: 0,
+    };
+    for (const t of tests) {
+      const scores = t.profileScores || {};
+      let topAxis: string | null = null;
+      let topVal = -Infinity;
+      for (const axis of AXES) {
+        const v = Number(scores[axis] ?? 0);
+        if (v > topVal) { topVal = v; topAxis = axis; }
+      }
+      if (topAxis && topVal > 0) distribution[topAxis]++;
+    }
+
+    // Actividad reciente: últimos 8 usuarios registrados con su último test.
+    const latestTestByUser = new Map<string, VocationalTest>();
+    for (const t of tests) {
+      const uid = t.user?.id;
+      if (!uid) continue;
+      const prev = latestTestByUser.get(uid);
+      if (!prev || new Date(t.completedAt) > new Date(prev.completedAt)) {
+        latestTestByUser.set(uid, t);
+      }
+    }
+    const recentUsers = [...users]
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+      .slice(0, 8)
+      .map((u) => {
+        const lt = latestTestByUser.get(u.id);
+        return {
+          fullname: u.fullname,
+          email: u.email,
+          createdAt: u.createdAt,
+          dominantTraits: lt?.dominantTraits || null,
+          hasTest: !!lt,
+        };
+      });
+
+    return {
+      totals: {
+        users: totalUsers,
+        students: totalStudents,
+        admins: totalAdmins,
+        moderated: moderatedCount,
+        tests: totalTests,
+        testsThisWeek,
+        testsThisMonth,
+        simulators: totalSimulators,
+        questions: totalQuestions,
+      },
+      distribution,
+      recentUsers,
+    };
+  }
 }
