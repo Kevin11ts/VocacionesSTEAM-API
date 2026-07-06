@@ -88,7 +88,7 @@ export class User {
   @Column({ type: 'text', nullable: true })
   suspensionReason?: string | null;
 
-  @Column({ nullable: true })
+  @Column({ type: 'varchar', nullable: true })
   hashedRefreshToken?: string | null;
 
   @OneToOne(() => UserSettings, (settings) => settings.user, { cascade: true })
