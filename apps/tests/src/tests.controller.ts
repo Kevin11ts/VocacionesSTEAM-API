@@ -8,6 +8,8 @@ import { MessagePattern, Payload } from '@nestjs/microservices';
 import { TestsService } from './tests.service';
 import { CatalogService } from './profile/catalog.service';
 import { ProfileService } from './profile/profile.service';
+import { CalibrationDeckService } from './calibration-deck.service';
+import { CalibrationDeck } from '@app/common';
 
 @Controller()
 export class TestsController {
@@ -15,6 +17,7 @@ export class TestsController {
     private readonly testsService: TestsService,
     private readonly catalogService: CatalogService,
     private readonly profileService: ProfileService,
+    private readonly calibrationDeckService: CalibrationDeckService,
   ) {}
 
   // --- Motor de perfil vocacional (A1-A7) ---
@@ -213,6 +216,37 @@ export class TestsController {
   @MessagePattern({ cmd: 'tests.admin-stats' })
   async getAdminStats() {
     return this.testsService.getAdminStats();
+  }
+
+  // --- Decks de calibración (swipe) ---
+  @MessagePattern({ cmd: 'calibration.decks-active' })
+  async getActiveDecks() {
+    return this.calibrationDeckService.getActiveDecks();
+  }
+
+  @MessagePattern({ cmd: 'calibration.deck-by-module' })
+  async getDeckByModule(@Payload() payload: { moduleId: string }) {
+    return this.calibrationDeckService.getDeckByModuleId(payload.moduleId);
+  }
+
+  @MessagePattern({ cmd: 'calibration.decks-all' })
+  async getAllDecks() {
+    return this.calibrationDeckService.getAllDecks();
+  }
+
+  @MessagePattern({ cmd: 'calibration.deck-create' })
+  async createDeck(@Payload() data: Partial<CalibrationDeck>) {
+    return this.calibrationDeckService.createDeck(data);
+  }
+
+  @MessagePattern({ cmd: 'calibration.deck-update' })
+  async updateDeck(@Payload() payload: { id: string; data: Partial<CalibrationDeck> }) {
+    return this.calibrationDeckService.updateDeck(payload.id, payload.data);
+  }
+
+  @MessagePattern({ cmd: 'calibration.deck-delete' })
+  async deleteDeck(@Payload() payload: { id: string }) {
+    return this.calibrationDeckService.deleteDeck(payload.id);
   }
 
   // --- Catálogos de vocaciones/carreras (A6/A7) ---

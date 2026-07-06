@@ -30,6 +30,10 @@ import {
   CalibrationGatewayController,
   SimulatorGatewayController,
 } from './profile.controller';
+import {
+  CalibrationDecksController,
+  AdminCalibrationDecksController,
+} from './calibration-decks.controller';
 
 @Module({
   imports: [
@@ -104,6 +108,8 @@ import {
     ProfileGatewayController,
     CalibrationGatewayController,
     SimulatorGatewayController,
+    CalibrationDecksController,
+    AdminCalibrationDecksController,
   ],
   providers: [JwtStrategy, JwtRefreshStrategy, GoogleStrategy, RolesGuard],
 })

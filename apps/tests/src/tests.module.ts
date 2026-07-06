@@ -3,6 +3,7 @@ import { TestsController } from './tests.controller';
 import { TestsService } from './tests.service';
 import { CatalogService } from './profile/catalog.service';
 import { ProfileService } from './profile/profile.service';
+import { CalibrationDeckService } from './calibration-deck.service';
 import {
   CommonModule,
   User,
@@ -18,6 +19,7 @@ import {
   ComplementaryTest,
   UserHistory,
   CalibrationResult,
+  CalibrationDeck,
   VocationCatalogItem,
   CareerCatalogItem,
   AxisMeta,
@@ -41,12 +43,13 @@ import { TypeOrmModule } from '@nestjs/typeorm';
       ComplementaryTest,
       UserHistory,
       CalibrationResult,
+      CalibrationDeck,
       VocationCatalogItem,
       CareerCatalogItem,
       AxisMeta,
     ]),
   ],
   controllers: [TestsController],
-  providers: [TestsService, CatalogService, ProfileService],
+  providers: [TestsService, CatalogService, ProfileService, CalibrationDeckService],
 })
 export class TestsModule {}
