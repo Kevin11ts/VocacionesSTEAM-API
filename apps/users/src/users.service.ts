@@ -80,6 +80,52 @@ export class UsersService {
     return { message: 'Usuario eliminado correctamente' };
   }
 
+  /**
+   * Modera una cuenta (acción del admin):
+   *  - suspend:    bloqueo temporal `durationDays` días.
+   *  - ban:        bloqueo permanente.
+   *  - reactivate: limpia cualquier bloqueo.
+   * Se revoca también el refresh token para cerrar sesiones activas.
+   */
+  async setSuspension(payload: {
+    id: string;
+    action: 'suspend' | 'ban' | 'reactivate';
+    durationDays?: number;
+    reason?: string;
+  }) {
+    const user = await this.userRepository.findOne({ where: { id: payload.id } });
+    if (!user) throw new RpcException('Usuario no encontrado');
+
+    if (user.role === 'admin' && payload.action !== 'reactivate') {
+      throw new RpcException('No se puede suspender a un administrador.');
+    }
+
+    if (payload.action === 'reactivate') {
+      user.isBanned = false;
+      user.suspendedUntil = null;
+      user.suspensionReason = null;
+    } else if (payload.action === 'ban') {
+      user.isBanned = true;
+      user.suspendedUntil = null;
+      user.suspensionReason = payload.reason?.trim() || null;
+    } else {
+      // suspend temporal
+      const days = Math.max(1, Math.floor(payload.durationDays ?? 7));
+      user.isBanned = false;
+      user.suspendedUntil = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
+      user.suspensionReason = payload.reason?.trim() || null;
+    }
+
+    // Invalida las sesiones activas del usuario moderado.
+    if (payload.action !== 'reactivate') {
+      user.hashedRefreshToken = null;
+    }
+
+    const saved = await this.userRepository.save(user);
+    const { password, ...safeUser } = saved;
+    return safeUser;
+  }
+
   async updateAvatar(userId: string, avatarUrl: string) {
     const user = await this.userRepository.findOne({ where: { id: userId } });
     if (!user) throw new RpcException('User not found');

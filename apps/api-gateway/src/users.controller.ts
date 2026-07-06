@@ -2,6 +2,7 @@ import {
   Controller,
   Get,
   Put,
+  Patch,
   Body,
   Inject,
   UseGuards,
@@ -268,5 +269,37 @@ export class UsersGatewayController {
   @ApiParam({ name: 'id', description: 'ID del usuario' })
   async remove(@Param('id') id: string) {
     return lastValueFrom(this.usersClient.send({ cmd: 'users.remove' }, id));
+  }
+
+  @Patch(':id/suspension')
+  @Roles('admin')
+  @ApiOperation({
+    summary: 'Suspender, banear o reactivar una cuenta (Admin)',
+  })
+  @ApiParam({ name: 'id', description: 'ID del usuario' })
+  @ApiBody({
+    schema: {
+      example: {
+        action: 'suspend',
+        durationDays: 7,
+        reason: 'Incumplimiento de los términos de uso.',
+      },
+    },
+  })
+  async setSuspension(
+    @Param('id') id: string,
+    @Body()
+    body: {
+      action: 'suspend' | 'ban' | 'reactivate';
+      durationDays?: number;
+      reason?: string;
+    },
+  ) {
+    return lastValueFrom(
+      this.usersClient.send(
+        { cmd: 'users.set-suspension' },
+        { id, ...body },
+      ),
+    );
   }
 }

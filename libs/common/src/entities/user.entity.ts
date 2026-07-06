@@ -75,8 +75,21 @@ export class User {
   @Column({ type: 'timestamp', nullable: true })
   lockUntil?: Date | null;
 
+  // --- Suspensión / baneo (moderación por el admin) ---
+  /** Baneo permanente: la cuenta no puede iniciar sesión hasta reactivarla. */
+  @Column({ default: false })
+  isBanned: boolean;
+
+  /** Suspensión temporal: la cuenta se bloquea hasta este instante. */
+  @Column({ type: 'timestamp', nullable: true })
+  suspendedUntil?: Date | null;
+
+  /** Motivo de la suspensión/baneo (se muestra al usuario y queda registrado). */
+  @Column({ type: 'text', nullable: true })
+  suspensionReason?: string | null;
+
   @Column({ nullable: true })
-  hashedRefreshToken?: string;
+  hashedRefreshToken?: string | null;
 
   @OneToOne(() => UserSettings, (settings) => settings.user, { cascade: true })
   settings: UserSettings;

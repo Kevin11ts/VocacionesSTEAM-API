@@ -133,6 +133,11 @@ export class AuthService {
     user.lockUntil = null;
     await this.userRepository.save(user);
 
+    // Suspensión / baneo aplicado por un administrador. Se comprueba solo
+    // tras validar la contraseña, para no revelar el estado de la cuenta a
+    // quien no conoce las credenciales.
+    this.assertNotSuspended(user);
+
     if (!user.isEmailVerified) {
       throw new RpcException('El correo no está verificado');
     }
@@ -301,9 +306,38 @@ export class AuthService {
       await this.userRepository.save(user);
     }
 
+    // También aquí, para que un baneo no se pueda evadir entrando por Google.
+    this.assertNotSuspended(user);
+
     const { password: _, ...safeUser } = user;
     const tokens = await this.generateTokens(user);
     return { ...tokens, user: safeUser };
+  }
+
+  /**
+   * Lanza si la cuenta está baneada permanentemente o suspendida y la
+   * suspensión todavía no venció. La suspensión vencida se limpia sola.
+   */
+  private assertNotSuspended(user: User) {
+    if (user.isBanned) {
+      throw new RpcException(
+        user.suspensionReason
+          ? `Tu cuenta ha sido suspendida permanentemente. Motivo: ${user.suspensionReason}`
+          : 'Tu cuenta ha sido suspendida permanentemente. Contacta a soporte.',
+      );
+    }
+    if (user.suspendedUntil && user.suspendedUntil > new Date()) {
+      const fecha = user.suspendedUntil.toLocaleDateString('es-MX', {
+        day: 'numeric',
+        month: 'long',
+        year: 'numeric',
+      });
+      throw new RpcException(
+        user.suspensionReason
+          ? `Tu cuenta está suspendida hasta el ${fecha}. Motivo: ${user.suspensionReason}`
+          : `Tu cuenta está suspendida hasta el ${fecha}.`,
+      );
+    }
   }
 
   async generateTokens(user: User) {

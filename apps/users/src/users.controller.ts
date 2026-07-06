@@ -105,4 +105,17 @@ export class UsersController {
   async remove(@Payload() id: string) {
     return this.usersService.remove(id);
   }
+
+  @MessagePattern({ cmd: 'users.set-suspension' })
+  async setSuspension(
+    @Payload()
+    payload: {
+      id: string;
+      action: 'suspend' | 'ban' | 'reactivate';
+      durationDays?: number;
+      reason?: string;
+    },
+  ) {
+    return this.usersService.setSuspension(payload);
+  }
 }
