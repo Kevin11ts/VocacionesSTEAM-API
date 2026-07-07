@@ -30,7 +30,7 @@ export class MailService {
 
     const frontendUrl = this.configService.get<string>(
       'FRONTEND_URL',
-      'https://pwa-vocaciones-steam.vercel.app',
+      'https://vocaciones-steam.vercel.app',
     );
 
     let subject = '';
