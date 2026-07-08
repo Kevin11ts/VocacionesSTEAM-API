@@ -52,3 +52,6 @@ Thumbs.db
 
 # Railway
 .railway/
+
+# Datos generados por scripts de administración (no son código fuente)
+/scripts/output/
