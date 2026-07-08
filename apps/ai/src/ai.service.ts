@@ -106,21 +106,96 @@ export class AiService {
   }
 
   /**
-   * Limpieza retroactiva: borra universidades YA GUARDADAS cuyo nombre
-   * coincide con el mismo bloqueo de "nombres basura" (JUNK_NAME_PATTERNS)
-   * que ya se aplica al descubrir — oficinas de gobierno, sindicatos,
-   * estacionamientos, etc. que se colaron en corridas anteriores.
+   * Radio de limpieza RETROACTIVA de duplicados (300m) — más generoso que
+   * el de ingesta (SAME_PLACE_RADIUS_KM, 150m). Existen porque el índice de
+   * "ya existe" al descubrir solo ve lo guardado ANTES de esa corrida: dos
+   * corridas separadas (ej. Places y luego DENUE, o el mismo estado dos
+   * veces) pueden guardar el mismo lugar dos veces si el geocoding varía
+   * más de 150m entre fuentes. Aquí sí se agrupa por NOMBRE (no solo
+   * ubicación), porque el objetivo es fusionar registros que ya sabemos que
+   * son la misma institución por su nombre.
+   */
+  private static readonly DUPLICATE_CLEANUP_RADIUS_KM = 0.3;
+
+  /** Qué tan completa está una ficha — al fusionar duplicados se conserva la de mayor puntaje. */
+  private completenessScore(u: University): number {
+    let score = 0;
+    if (u.costTier) score++;
+    if (u.tuitionRange) score++;
+    if (u.rating != null) score++;
+    if (u.modality) score++;
+    if (u.website) score++;
+    score += (u.steamPrograms?.length || 0) * 2; // los programas son lo que activa el matching de A8
+    return score;
+  }
+
+  /**
+   * Limpieza retroactiva sobre lo YA GUARDADO, en dos pasadas:
+   * 1) Nombres basura (JUNK_NAME_PATTERNS) — oficinas de gobierno,
+   *    sindicatos, estacionamientos, etc. que se colaron en corridas
+   *    anteriores.
+   * 2) Duplicados: mismo nombre normalizado a <300m — se conserva la ficha
+   *    más completa (con programas/costo ya llenados) y se borran las
+   *    demás del mismo cluster.
    */
   async cleanupJunkUniversities(): Promise<{
     deleted: number;
     deletedNames: string[];
   }> {
-    const all = await this.universityRepository.find({ select: ['id', 'name'] });
-    const junk = all.filter((u) => this.isJunkName(u.name));
-    if (!junk.length) return { deleted: 0, deletedNames: [] };
+    const all = await this.universityRepository.find();
+    const toDelete = new Set<string>();
+    const deletedNames: string[] = [];
 
-    await this.universityRepository.delete(junk.map((u) => u.id));
-    return { deleted: junk.length, deletedNames: junk.map((u) => u.name) };
+    for (const u of all) {
+      if (this.isJunkName(u.name)) {
+        toDelete.add(u.id);
+        deletedNames.push(u.name);
+      }
+    }
+
+    const survivors = all.filter((u) => !toDelete.has(u.id) && u.location);
+    const byName = new Map<string, University[]>();
+    for (const u of survivors) {
+      const key = this.normalizeName(u.name);
+      const list = byName.get(key) ?? [];
+      list.push(u);
+      byName.set(key, list);
+    }
+
+    for (const group of byName.values()) {
+      if (group.length < 2) continue;
+      // Clustering simple por cercanía dentro del mismo nombre: une cualquier
+      // par a <300m (encadenado), sin tocar campus realmente distintos y lejanos.
+      const clusters: University[][] = [];
+      for (const u of group) {
+        const cluster = clusters.find((c) =>
+          c.some(
+            (member) =>
+              haversineKm(
+                { lat: member.location.latitude, lng: member.location.longitude },
+                { lat: u.location.latitude, lng: u.location.longitude },
+              ) < AiService.DUPLICATE_CLEANUP_RADIUS_KM,
+          ),
+        );
+        if (cluster) cluster.push(u);
+        else clusters.push([u]);
+      }
+
+      for (const cluster of clusters) {
+        if (cluster.length < 2) continue;
+        const [, ...remove] = [...cluster].sort(
+          (a, b) => this.completenessScore(b) - this.completenessScore(a),
+        );
+        for (const u of remove) {
+          toDelete.add(u.id);
+          deletedNames.push(u.name);
+        }
+      }
+    }
+
+    if (!toDelete.size) return { deleted: 0, deletedNames: [] };
+    await this.universityRepository.delete([...toDelete]);
+    return { deleted: toDelete.size, deletedNames };
   }
 
   /**
