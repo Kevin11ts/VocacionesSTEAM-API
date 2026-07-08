@@ -208,6 +208,42 @@ export class AiService {
     ['Zacatecas', 'Zacatecas'],
   ];
 
+  /** Código de entidad INEGI (01-32) por nombre de estado — mismos 32 nombres que DISCOVERY_CITIES. */
+  private static readonly INEGI_STATE_CODES: Record<string, string> = {
+    'Aguascalientes': '01',
+    'Baja California': '02',
+    'Baja California Sur': '03',
+    'Campeche': '04',
+    'Coahuila': '05',
+    'Colima': '06',
+    'Chiapas': '07',
+    'Chihuahua': '08',
+    'CDMX': '09',
+    'Durango': '10',
+    'Guanajuato': '11',
+    'Guerrero': '12',
+    'Hidalgo': '13',
+    'Jalisco': '14',
+    'Estado de México': '15',
+    'Michoacán': '16',
+    'Morelos': '17',
+    'Nayarit': '18',
+    'Nuevo León': '19',
+    'Oaxaca': '20',
+    'Puebla': '21',
+    'Querétaro': '22',
+    'Quintana Roo': '23',
+    'San Luis Potosí': '24',
+    'Sinaloa': '25',
+    'Sonora': '26',
+    'Tabasco': '27',
+    'Tamaulipas': '28',
+    'Tlaxcala': '29',
+    'Veracruz': '30',
+    'Yucatán': '31',
+    'Zacatecas': '32',
+  };
+
   private normalizeName(name: string): string {
     return (name || '')
       .toLowerCase()
@@ -397,6 +433,171 @@ export class AiService {
             rating: place.rating,
           });
         }
+      }
+    }
+
+    const result = await this.bulkCreateUniversities(newRows);
+    return { totalFound, skippedExisting, ...result };
+  }
+
+  /**
+   * Página de resultados del DENUE (INEGI) para el SCIAN 6113 "Escuelas de
+   * educación superior" (611311 público / 611312 privado) en un estado.
+   * `start`/`end` son 1-indexados, tramo inclusive (ej. 1-300).
+   */
+  private async denueFetchPage(
+    token: string,
+    entidad: string,
+    start: number,
+    end: number,
+  ): Promise<any[]> {
+    const url =
+      `https://www.inegi.org.mx/app/api/denue/v1/consulta/BuscarAreaAct/` +
+      `${entidad}/0/0/0/0/61/611/6113/0/0/${start}/${end}/0/${token}`;
+    const res = await fetch(url);
+    if (!res.ok) {
+      throw new Error(`DENUE respondió HTTP ${res.status}`);
+    }
+    const data = await res.json();
+    if (!Array.isArray(data)) {
+      // La API del DENUE responde texto plano (no JSON) en varios casos de
+      // error (token inválido, parámetros mal formados, etc.).
+      throw new Error(
+        typeof data === 'string' ? data : 'Respuesta inesperada del DENUE',
+      );
+    }
+    return data;
+  }
+
+  /**
+   * Descubrimiento vía DENUE (INEGI) — censo económico oficial, filtrado por
+   * el SCIAN exacto de educación superior (no depende de palabras clave).
+   * Requiere `states` (a diferencia del descubrimiento por Google Places):
+   * un solo estado puede traer cientos de registros, así que correr los 32
+   * de un jalón en una sola petición HTTP arriesgaría timeout.
+   *
+   * DENUE registra cada plantel/facultad como una "unidad económica"
+   * separada (ej. UNAM aparece decenas de veces: una por facultad). Se usa
+   * `Razon_social` (la institución dueña) como nombre — no `Nombre` (que es
+   * el edificio/departamento específico) — para que la deduplicación por
+   * proximidad ya existente colapse esas facultades cercanas en una sola
+   * universidad, sin perder campus realmente distintos en otras ciudades.
+   */
+  async discoverFromDenue(states: string[]): Promise<{
+    totalFound: number;
+    created: number;
+    skippedExisting: number;
+    failed: number;
+    errors: { index: number; name?: string; error: string }[];
+  }> {
+    const token = this.configService.get<string>('INEGI_DENUE_TOKEN');
+    if (!token) {
+      throw new Error('INEGI_DENUE_TOKEN no está configurada en el servidor.');
+    }
+    if (!states?.length) {
+      throw new Error(
+        'El descubrimiento por DENUE requiere elegir un estado (puede traer cientos de registros por estado).',
+      );
+    }
+
+    const entityCodes = states
+      .map((s) => AiService.INEGI_STATE_CODES[s])
+      .filter((code): code is string => !!code);
+    if (!entityCodes.length) {
+      throw new Error(
+        `Ningún estado coincide con: ${states.join(', ')}. Revisa el nombre exacto (ej. "Jalisco", "CDMX", "Estado de México").`,
+      );
+    }
+
+    const existing = await this.universityRepository.find({
+      select: ['name', 'location'],
+    });
+    const existingByName = new Map<
+      string,
+      { latitude: number; longitude: number }[]
+    >();
+    for (const u of existing) {
+      const key = this.normalizeName(u.name);
+      const list = existingByName.get(key) ?? [];
+      if (u.location) list.push(u.location);
+      existingByName.set(key, list);
+    }
+
+    const isSameCampusAsExisting = (
+      name: string,
+      loc?: { latitude: number; longitude: number },
+    ): boolean => {
+      const candidates = existingByName.get(this.normalizeName(name));
+      if (!candidates?.length) return false;
+      if (!loc) return true;
+      return candidates.some(
+        (c) =>
+          haversineKm(
+            { lat: c.latitude, lng: c.longitude },
+            { lat: loc.latitude, lng: loc.longitude },
+          ) < 5,
+      );
+    };
+
+    const PAGE_SIZE = 300;
+    const MAX_PER_STATE = 3000; // salvaguarda: ningún estado debería tener más
+    const newRows: Partial<University>[] = [];
+    let totalFound = 0;
+    let skippedExisting = 0;
+
+    for (const entidad of entityCodes) {
+      let start = 1;
+      while (start <= MAX_PER_STATE) {
+        const end = start + PAGE_SIZE - 1;
+        let page: any[] = [];
+        try {
+          page = await this.denueFetchPage(token, entidad, start, end);
+        } catch (err) {
+          this.logger.error(
+            `DENUE falló para entidad ${entidad} (${start}-${end}): ${err.message || err}`,
+          );
+          break;
+        }
+        if (!page.length) break;
+
+        for (const row of page) {
+          const nombre = (row.Razon_social || row.Nombre || '').trim();
+          if (!nombre || /ESTACIONAMIENTO/i.test(row.Nombre || '')) continue;
+
+          const lat = parseFloat(row.Latitud);
+          const lng = parseFloat(row.Longitud);
+          const loc =
+            Number.isFinite(lat) && Number.isFinite(lng)
+              ? { latitude: lat, longitude: lng }
+              : undefined;
+
+          totalFound++;
+
+          if (isSameCampusAsExisting(nombre, loc)) {
+            skippedExisting++;
+            continue;
+          }
+          const key = this.normalizeName(nombre);
+          const list = existingByName.get(key) ?? [];
+          if (loc) list.push(loc);
+          existingByName.set(key, list);
+
+          newRows.push({
+            name: nombre,
+            location: loc,
+            address: [row.Tipo_vialidad, row.Calle, row.Num_Exterior, row.Colonia]
+              .filter(Boolean)
+              .join(' ') || undefined,
+            website: row.Sitio_internet
+              ? row.Sitio_internet.toLowerCase().startsWith('http')
+                ? row.Sitio_internet.toLowerCase()
+                : `http://${row.Sitio_internet.toLowerCase()}`
+              : undefined,
+          });
+        }
+
+        if (page.length < PAGE_SIZE) break; // última página
+        start += PAGE_SIZE;
       }
     }
 

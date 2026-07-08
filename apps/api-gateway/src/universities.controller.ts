@@ -161,6 +161,29 @@ export class AdminUniversitiesController {
 
   @ApiOperation({
     summary:
+      'Descubrimiento vía DENUE/INEGI (censo económico oficial, SCIAN 6113 ' +
+      'educación superior) — Admin only. Requiere "states" (uno o más).',
+  })
+  @ApiResponse({
+    status: 201,
+    description:
+      '{ totalFound, created, skippedExisting, failed, errors: [{ index, name, error }] }',
+  })
+  @ApiBody({
+    schema: { example: { states: ['Jalisco'] } },
+  })
+  @Post('discover-denue')
+  async discoverFromDenue(@Body() body: { states: string[] }) {
+    return lastValueFrom(
+      this.aiClient.send(
+        { cmd: 'ai.discover-universities-denue' },
+        { states: body?.states },
+      ),
+    );
+  }
+
+  @ApiOperation({
+    summary:
       'Carga masiva de universidades (Admin only) — acepta CSV o JSON en el body',
   })
   @ApiResponse({

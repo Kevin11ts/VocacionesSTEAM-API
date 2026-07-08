@@ -72,4 +72,9 @@ export class AiController {
   async discoverUniversities(@Payload() payload: { states?: string[] }) {
     return this.aiService.discoverUniversities(payload?.states);
   }
+
+  @MessagePattern({ cmd: 'ai.discover-universities-denue' })
+  async discoverFromDenue(@Payload() payload: { states: string[] }) {
+    return this.aiService.discoverFromDenue(payload?.states);
+  }
 }
