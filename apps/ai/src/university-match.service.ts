@@ -3,7 +3,6 @@ import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { RpcException } from '@nestjs/microservices';
-import { GoogleGenerativeAI } from '@google/generative-ai';
 import Groq from 'groq-sdk';
 import { createHash } from 'crypto';
 import {
@@ -50,7 +49,6 @@ const PROVIDER_TIMEOUT_MS = 12_000;
 @Injectable()
 export class UniversityMatchService {
   private readonly logger = new Logger(UniversityMatchService.name);
-  private readonly gemini: GoogleGenerativeAI | null;
   private readonly groq: Groq | null;
 
   constructor(
@@ -64,22 +62,13 @@ export class UniversityMatchService {
     @InjectRepository(AiLog)
     private readonly aiLogRepository: Repository<AiLog>,
   ) {
-    const geminiKey = this.configService.get<string>('GEMINI_API_KEY_UNIS');
     const groqKey = this.configService.get<string>('GROQ_API_KEY');
 
-    // Gemini no tiene facturación configurada (confirmado): se instancia
-    // solo si hay clave, para no perder tiempo intentándolo a ciegas.
-    this.gemini = geminiKey ? new GoogleGenerativeAI(geminiKey) : null;
     this.groq = groqKey ? new Groq({ apiKey: groqKey }) : null;
 
     if (!groqKey) {
       this.logger.error(
         'CRITICAL: GROQ_API_KEY no está configurada. A8 responderá siempre con ranking determinista (sin explicación de IA).',
-      );
-    }
-    if (!geminiKey) {
-      this.logger.warn(
-        'GEMINI_API_KEY_UNIS no configurada: Gemini queda deshabilitado como fallback de A8.',
       );
     }
   }
@@ -401,68 +390,49 @@ export class UniversityMatchService {
       request,
     );
 
-    // Groq primero: es el único proveedor con facturación activa hoy.
-    // Gemini queda como fallback opcional (se omite si no hay clave) y no
-    // debe bloquear la respuesta más de PROVIDER_TIMEOUT_MS.
-    const providers: Array<{
-      name: string;
-      enabled: boolean;
-      call: () => Promise<{ text: string; tokens: number }>;
-    }> = [
-      { name: 'Groq', enabled: !!this.groq, call: () => this.callGroq(prompt) },
-      {
-        name: 'Gemini',
-        enabled: !!this.gemini,
-        call: () => this.callGemini(prompt),
-      },
-    ];
+    if (!this.groq) {
+      this.logger.warn('A8: Groq deshabilitado (sin API key), se omite.');
+      await this.upsertCache(userId, cacheKey, {}, DETERMINISTIC_FALLBACK_PROVIDER);
+      return null;
+    }
 
-    for (const provider of providers) {
-      if (!provider.enabled) {
-        this.logger.warn(
-          `A8: proveedor ${provider.name} deshabilitado (sin API key), se omite.`,
-        );
-        continue;
-      }
+    const startTime = Date.now();
+    try {
+      const { text, tokens } = await this.withTimeout(
+        this.callGroq(prompt),
+        PROVIDER_TIMEOUT_MS,
+        'Groq',
+      );
+      const cleaned = text.replace(/```json|```/g, '').trim();
+      const parsed = JSON.parse(cleaned);
+      const validated = validateAiMatches(parsed?.matches ?? [], candidates);
 
-      const startTime = Date.now();
-      try {
-        const { text, tokens } = await this.withTimeout(
-          provider.call(),
-          PROVIDER_TIMEOUT_MS,
-          provider.name,
-        );
-        const cleaned = text.replace(/```json|```/g, '').trim();
-        const parsed = JSON.parse(cleaned);
-        const validated = validateAiMatches(parsed?.matches ?? [], candidates);
+      await this.saveLog(
+        userId,
+        dominantAxes.join(' + '),
+        Date.now() - startTime,
+        true,
+        '',
+        tokens,
+        'Groq',
+      );
 
-        await this.saveLog(
-          userId,
-          dominantAxes.join(' + '),
-          Date.now() - startTime,
-          true,
-          '',
-          tokens,
-          provider.name,
-        );
-
-        // Cachear solo resultados exitosos: los filtros posteriores se
-        // aplican sobre este caché sin volver a llamar a la IA.
-        await this.upsertCache(userId, cacheKey, validated, provider.name);
-        return { adjustments: validated, provider: provider.name };
-      } catch (error) {
-        const detail = this.describeProviderError(error);
-        this.logger.error(`A8 falló con ${provider.name}: ${detail}`);
-        await this.saveLog(
-          userId,
-          dominantAxes.join(' + '),
-          Date.now() - startTime,
-          false,
-          detail,
-          0,
-          provider.name,
-        );
-      }
+      // Cachear solo resultados exitosos: los filtros posteriores se
+      // aplican sobre este caché sin volver a llamar a la IA.
+      await this.upsertCache(userId, cacheKey, validated, 'Groq');
+      return { adjustments: validated, provider: 'Groq' };
+    } catch (error) {
+      const detail = this.describeProviderError(error);
+      this.logger.error(`A8 falló con Groq: ${detail}`);
+      await this.saveLog(
+        userId,
+        dominantAxes.join(' + '),
+        Date.now() - startTime,
+        false,
+        detail,
+        0,
+        'Groq',
+      );
     }
 
     // Degradación limpia: ranking 100% determinista (matchScore = baseScore).
@@ -519,24 +489,6 @@ export class UniversityMatchService {
     const status = error?.status ?? error?.response?.status ?? error?.code;
     const message = error?.message || String(error);
     return status ? `[${status}] ${message}` : message;
-  }
-
-  private async callGemini(
-    prompt: string,
-  ): Promise<{ text: string; tokens: number }> {
-    if (!this.gemini) throw new Error('Gemini no configurado (sin API key)');
-    const model = this.gemini.getGenerativeModel({
-      model: 'gemini-2.0-flash-lite',
-      generationConfig: {
-        responseMimeType: 'application/json',
-        temperature: 0.2,
-      },
-    });
-    const result = await model.generateContent(prompt);
-    return {
-      text: result.response.text(),
-      tokens: result.response.usageMetadata?.totalTokenCount || 0,
-    };
   }
 
   private async callGroq(

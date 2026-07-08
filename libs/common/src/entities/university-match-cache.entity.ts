@@ -35,7 +35,7 @@ export class UniversityMatchCache {
     { matchScore: number; explanation: string; scoreAdjustmentReason?: string }
   >;
 
-  /** Proveedor que generó el ajuste (Gemini | Groq | deterministic). */
+  /** Proveedor que generó el ajuste (Groq | deterministic). */
   @Column({ nullable: true })
   provider: string;
 
