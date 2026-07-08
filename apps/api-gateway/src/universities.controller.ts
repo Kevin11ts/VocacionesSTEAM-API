@@ -123,4 +123,102 @@ export class AdminUniversitiesController {
       this.aiClient.send({ cmd: 'ai.delete-university' }, { id }),
     );
   }
+
+  @ApiOperation({
+    summary:
+      'Carga masiva de universidades (Admin only) — acepta CSV o JSON en el body',
+  })
+  @ApiResponse({
+    status: 201,
+    description: '{ created, failed, errors: [{ index, name, error }] }',
+  })
+  @ApiBody({
+    schema: {
+      example: {
+        csv:
+          'name,latitude,longitude,address,website,costTier,tuitionRange,rating,modality,steamPrograms\n' +
+          '"Tec de Monterrey",25.6514,-100.2895,"Av. Eugenio Garza Sada 2501",https://tec.mx,private-premium,"$180000-220000 MXN",4.6,presencial,"Ingeniería en Software:tecnologia|Ciencia de Datos:matematicas"',
+      },
+    },
+  })
+  @Post('bulk-import')
+  async bulkImport(@Body() body: { csv?: string; universities?: any[] }) {
+    const rows =
+      body.universities ?? (body.csv ? parseUniversitiesCsv(body.csv) : []);
+    return lastValueFrom(
+      this.aiClient.send({ cmd: 'ai.bulk-create-universities' }, rows),
+    );
+  }
+}
+
+/**
+ * Parser de CSV mínimo (sin dependencia externa) para la carga masiva de
+ * universidades. Soporta campos entre comillas con comas internas.
+ * `steamPrograms` usa el sub-formato "Nombre:area|Nombre2:area2" dentro de
+ * su propia celda, ya que es la única columna con estructura anidada.
+ */
+function parseUniversitiesCsv(csv: string): any[] {
+  const lines = csv.split(/\r\n|\n/).filter((line) => line.trim().length);
+  if (lines.length < 2) return [];
+
+  const parseLine = (line: string): string[] => {
+    const cells: string[] = [];
+    let current = '';
+    let inQuotes = false;
+    for (let i = 0; i < line.length; i++) {
+      const char = line[i];
+      if (char === '"') {
+        if (inQuotes && line[i + 1] === '"') {
+          current += '"';
+          i++;
+        } else {
+          inQuotes = !inQuotes;
+        }
+      } else if (char === ',' && !inQuotes) {
+        cells.push(current);
+        current = '';
+      } else {
+        current += char;
+      }
+    }
+    cells.push(current);
+    return cells.map((c) => c.trim());
+  };
+
+  const headers = parseLine(lines[0]).map((h) => h.toLowerCase());
+  const numberOrUndefined = (v: string) =>
+    v === '' || v === undefined ? undefined : Number(v);
+
+  return lines.slice(1).map((line) => {
+    const cells = parseLine(line);
+    const row: Record<string, string> = {};
+    headers.forEach((header, i) => (row[header] = cells[i] ?? ''));
+
+    const lat = numberOrUndefined(row['latitude']);
+    const lng = numberOrUndefined(row['longitude']);
+
+    const steamPrograms = (row['steamprograms'] || '')
+      .split('|')
+      .map((entry) => entry.trim())
+      .filter(Boolean)
+      .map((entry) => {
+        const [name, area] = entry.split(':').map((s) => s.trim());
+        return { name, area };
+      });
+
+    return {
+      name: row['name'],
+      location:
+        lat !== undefined && lng !== undefined
+          ? { latitude: lat, longitude: lng }
+          : undefined,
+      address: row['address'] || undefined,
+      website: row['website'] || undefined,
+      costTier: row['costtier'] || undefined,
+      tuitionRange: row['tuitionrange'] || undefined,
+      rating: numberOrUndefined(row['rating']),
+      modality: row['modality'] || undefined,
+      steamPrograms: steamPrograms.length ? steamPrograms : undefined,
+    };
+  });
 }

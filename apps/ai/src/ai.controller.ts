@@ -57,4 +57,9 @@ export class AiController {
     await this.aiService.deleteUniversity(payload.id);
     return { success: true };
   }
+
+  @MessagePattern({ cmd: 'ai.bulk-create-universities' })
+  async bulkCreateUniversities(@Payload() rows: any[]) {
+    return this.aiService.bulkCreateUniversities(rows);
+  }
 }

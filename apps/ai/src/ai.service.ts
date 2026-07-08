@@ -92,4 +92,53 @@ export class AiService {
   async deleteUniversity(id: string): Promise<void> {
     await this.universityRepository.delete(id);
   }
+
+  /**
+   * Carga masiva (CSV/JSON) desde el panel admin. Cada fila se valida y
+   * guarda por separado: una fila inválida no debe tirar el lote completo.
+   * `name` + `location` (lat/lng) son obligatorios porque sin ellos A8 los
+   * excluye de cualquier forma (ver university-match.service.ts).
+   */
+  async bulkCreateUniversities(rows: Partial<University>[]): Promise<{
+    created: number;
+    failed: number;
+    errors: { index: number; name?: string; error: string }[];
+  }> {
+    const errors: { index: number; name?: string; error: string }[] = [];
+    let created = 0;
+
+    for (let index = 0; index < rows.length; index++) {
+      const row = rows[index];
+      const name = typeof row?.name === 'string' ? row.name.trim() : '';
+      const lat = row?.location?.latitude;
+      const lng = row?.location?.longitude;
+
+      if (!name) {
+        errors.push({ index, error: 'Falta el campo "name"' });
+        continue;
+      }
+      if (typeof lat !== 'number' || typeof lng !== 'number') {
+        errors.push({
+          index,
+          name,
+          error: 'Falta location.latitude/longitude (obligatorio para el matching)',
+        });
+        continue;
+      }
+
+      try {
+        const university = this.universityRepository.create({
+          ...row,
+          name,
+          location: { latitude: lat, longitude: lng },
+        });
+        await this.universityRepository.save(university);
+        created++;
+      } catch (err) {
+        errors.push({ index, name, error: err.message || String(err) });
+      }
+    }
+
+    return { created, failed: errors.length, errors };
+  }
 }
