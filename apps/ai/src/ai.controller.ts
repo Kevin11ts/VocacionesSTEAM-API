@@ -62,4 +62,9 @@ export class AiController {
   async bulkCreateUniversities(@Payload() rows: any[]) {
     return this.aiService.bulkCreateUniversities(rows);
   }
+
+  @MessagePattern({ cmd: 'ai.discover-universities' })
+  async discoverUniversities() {
+    return this.aiService.discoverUniversities();
+  }
 }

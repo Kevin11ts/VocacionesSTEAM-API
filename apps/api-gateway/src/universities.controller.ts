@@ -126,6 +126,22 @@ export class AdminUniversitiesController {
 
   @ApiOperation({
     summary:
+      'Descubrimiento automático de universidades vía Google Places (Admin only)',
+  })
+  @ApiResponse({
+    status: 201,
+    description:
+      '{ totalFound, created, skippedExisting, failed, errors: [{ index, name, error }] }',
+  })
+  @Post('discover')
+  async discoverUniversities() {
+    return lastValueFrom(
+      this.aiClient.send({ cmd: 'ai.discover-universities' }, {}),
+    );
+  }
+
+  @ApiOperation({
+    summary:
       'Carga masiva de universidades (Admin only) — acepta CSV o JSON en el body',
   })
   @ApiResponse({
