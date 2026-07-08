@@ -58,13 +58,18 @@ export class AiController {
     return { success: true };
   }
 
+  @MessagePattern({ cmd: 'ai.delete-all-universities' })
+  async deleteAllUniversities() {
+    return this.aiService.deleteAllUniversities();
+  }
+
   @MessagePattern({ cmd: 'ai.bulk-create-universities' })
   async bulkCreateUniversities(@Payload() rows: any[]) {
     return this.aiService.bulkCreateUniversities(rows);
   }
 
   @MessagePattern({ cmd: 'ai.discover-universities' })
-  async discoverUniversities() {
-    return this.aiService.discoverUniversities();
+  async discoverUniversities(@Payload() payload: { states?: string[] }) {
+    return this.aiService.discoverUniversities(payload?.states);
   }
 }

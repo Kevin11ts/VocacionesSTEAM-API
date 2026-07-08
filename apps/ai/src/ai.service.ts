@@ -95,6 +95,15 @@ export class AiService {
     await this.universityRepository.delete(id);
   }
 
+  /** Borra TODAS las universidades — para reiniciar el mapeo desde cero. */
+  async deleteAllUniversities(): Promise<{ deleted: number }> {
+    const { affected } = await this.universityRepository
+      .createQueryBuilder()
+      .delete()
+      .execute();
+    return { deleted: affected ?? 0 };
+  }
+
   /**
    * Carga masiva (CSV/JSON) desde el panel admin. Cada fila se valida y
    * guarda por separado: una fila inválida no debe tirar el lote completo.
@@ -237,7 +246,7 @@ export class AiService {
    * NO llena steamPrograms/costTier/tuitionRange/modality: eso requiere
    * curación manual por institución (no se inventan datos de programas).
    */
-  async discoverUniversities(): Promise<{
+  async discoverUniversities(states?: string[]): Promise<{
     totalFound: number;
     created: number;
     skippedExisting: number;
@@ -248,6 +257,20 @@ export class AiService {
     if (!apiKey) {
       throw new Error(
         'GOOGLE_PLACES_API_KEY no está configurada en el servidor.',
+      );
+    }
+
+    const wantedStates = states?.length
+      ? new Set(states.map((s) => this.normalizeName(s)))
+      : null;
+    const cities = wantedStates
+      ? AiService.DISCOVERY_CITIES.filter(([, state]) =>
+          wantedStates.has(this.normalizeName(state)),
+        )
+      : AiService.DISCOVERY_CITIES;
+    if (wantedStates && !cities.length) {
+      throw new Error(
+        `Ningún estado coincide con: ${states!.join(', ')}. Revisa el nombre exacto (ej. "Jalisco", "CDMX", "Estado de México").`,
       );
     }
 
@@ -263,7 +286,7 @@ export class AiService {
     let totalFound = 0;
     let skippedExisting = 0;
 
-    for (const [city, state] of AiService.DISCOVERY_CITIES) {
+    for (const [city, state] of cities) {
       let results: any[] = [];
       try {
         results = await this.placesTextSearch(

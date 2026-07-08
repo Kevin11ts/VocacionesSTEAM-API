@@ -117,6 +117,17 @@ export class AdminUniversitiesController {
     );
   }
 
+  @ApiOperation({
+    summary: 'Elimina TODAS las universidades (Admin only) — para reiniciar el mapeo',
+  })
+  @ApiResponse({ status: 200, description: '{ deleted: number }' })
+  @Delete('all')
+  async deleteAllUniversities() {
+    return lastValueFrom(
+      this.aiClient.send({ cmd: 'ai.delete-all-universities' }, {}),
+    );
+  }
+
   @Delete(':id')
   async deleteUniversity(@Param('id') id: string) {
     return lastValueFrom(
@@ -126,17 +137,25 @@ export class AdminUniversitiesController {
 
   @ApiOperation({
     summary:
-      'Descubrimiento automático de universidades vía Google Places (Admin only)',
+      'Descubrimiento automático de universidades vía Google Places (Admin only). ' +
+      'Sin "states": corre las 32 capitales + zonas metropolitanas grandes. Con "states": solo esos.',
   })
   @ApiResponse({
     status: 201,
     description:
       '{ totalFound, created, skippedExisting, failed, errors: [{ index, name, error }] }',
   })
+  @ApiBody({
+    required: false,
+    schema: { example: { states: ['Jalisco', 'Nuevo León'] } },
+  })
   @Post('discover')
-  async discoverUniversities() {
+  async discoverUniversities(@Body() body: { states?: string[] }) {
     return lastValueFrom(
-      this.aiClient.send({ cmd: 'ai.discover-universities' }, {}),
+      this.aiClient.send(
+        { cmd: 'ai.discover-universities' },
+        { states: body?.states },
+      ),
     );
   }
 
