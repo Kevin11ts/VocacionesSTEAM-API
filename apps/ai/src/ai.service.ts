@@ -285,8 +285,16 @@ export class AiService {
     /^DELEGACION\b/i,
     /^SECRETARIA DE EDUCACI[OÓ]N P[UÚ]BLICA$/i, // exacto: la dependencia en sí, no un nombre que solo la incluye
     /^DESPACHO JUR[IÍ]DICO\b/i,
-    /^DIRECCI[OÓ]N DE (FOMENTO|DEPORTE)\b/i,
+    /^DIRECCI[OÓ]N (GENERAL )?DE (FOMENTO|DEPORTE)\b/i,
     /^SITIO WEB TEMPORAL\b/i,
+    /^ALMAC[EÉ]N\b/i,
+    /^BODEGA\b/i,
+    /^CAMPO DE (BEISBOL|F[UÚ]TBOL|DEPORTES|TIRO)\b/i,
+    /^ABOGADO GENERAL\b/i,
+    /^CONSEJO ACAD[EÉ]MICO\b/i,
+    /^OFICINA ADMINISTRATIVA\b/i,
+    /^FONDO DE\b/i,
+    /SIN NOMBRE$/i, // artefacto del propio censo del INEGI, no un nombre real
   ];
 
   private isJunkName(name: string): boolean {
@@ -559,10 +567,17 @@ export class AiService {
    *
    * DENUE registra cada plantel/facultad como una "unidad económica"
    * separada (ej. UNAM aparece decenas de veces: una por facultad). Se usa
-   * `Razon_social` (la institución dueña) como nombre — no `Nombre` (que es
-   * el edificio/departamento específico) — para que la deduplicación por
-   * proximidad ya existente colapse esas facultades cercanas en una sola
-   * universidad, sin perder campus realmente distintos en otras ciudades.
+   * `Nombre` (el plantel específico) como nombre, NO `Razon_social` (la
+   * dependencia dueña): para escuelas federales (Institutos Tecnológicos,
+   * Normales) la razón social suele ser genérica ("SECRETARIA DE EDUCACION
+   * PUBLICA", "TECNOLOGICO NACIONAL DE MEXICO"), compartida por decenas de
+   * planteles totalmente distintos en el mismo estado — usarla como nombre
+   * los volvía indistinguibles entre sí y, peor, los excluía por completo
+   * al coincidir con el filtro de nombres basura (JUNK_NAME_PATTERNS
+   * bloquea la dependencia "SECRETARIA DE EDUCACION PUBLICA" a secas, no
+   * el plantel real). La deduplicación ya es por ubicación física (<150m,
+   * ver isNearIndexedLocation), no por nombre, así que no hay necesidad de
+   * colapsar por razón social: planteles a >150m siempre se guardan aparte.
    */
   async discoverFromDenue(states: string[]): Promise<{
     totalFound: number;
@@ -619,8 +634,8 @@ export class AiService {
         if (!page.length) break;
 
         for (const row of page) {
-          const nombre = (row.Razon_social || row.Nombre || '').trim();
-          if (!nombre || this.isJunkName(row.Nombre) || this.isJunkName(nombre)) continue;
+          const nombre = (row.Nombre || row.Razon_social || '').trim();
+          if (!nombre || this.isJunkName(nombre)) continue;
 
           const lat = parseFloat(row.Latitud);
           const lng = parseFloat(row.Longitud);
