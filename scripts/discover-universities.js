@@ -2,7 +2,8 @@
 /**
  * Descubrimiento masivo de universidades vía Google Places API (Text Search).
  *
- * Busca "universidad" en las 32 capitales estatales de México más algunas
+ * Busca "universidad" / "instituto tecnológico" / "centro universitario" /
+ * "escuela superior" en las 32 capitales estatales de México más algunas
  * zonas metropolitanas grandes (para no depender solo de la capital, que a
  * veces no es la ciudad con más universidades del estado), de-duplica por
  * place_id, y genera un CSV listo para POST /admin/universities/bulk-import.
@@ -13,10 +14,10 @@
  * Uso:
  *   GOOGLE_PLACES_API_KEY=tu_clave node scripts/discover-universities.js
  *
- * Costo aproximado: ~45 ciudades x hasta 3 páginas (Text Search) = ~135
- * requests. Revisa el pricing vigente de Places API antes de correrlo a
- * gran escala (Google suele dar crédito mensual gratuito que suele cubrir
- * esto, pero verifícalo en tu propia consola de facturación).
+ * Costo aproximado: ~45 ciudades x 4 términos x hasta 3 páginas (Text
+ * Search) = ~540 requests. Revisa el pricing vigente de Places API antes de
+ * correrlo a gran escala (Google suele dar crédito mensual gratuito que
+ * suele cubrir esto, pero verifícalo en tu propia consola de facturación).
  */
 
 const fs = require('fs');
@@ -77,6 +78,9 @@ const CITIES = [
   ['Zacatecas', 'Zacatecas'],
 ];
 
+// "universidad" no cubre Institutos Tecnológicos, Escuelas Superiores del IPN, etc.
+const SEARCH_TERMS = ['universidad', 'instituto tecnológico', 'centro universitario', 'escuela superior'];
+
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function textSearch(query, pagetoken) {
@@ -97,8 +101,8 @@ async function textSearch(query, pagetoken) {
   return data;
 }
 
-async function searchCity(city, state) {
-  const query = `universidad en ${city}, ${state}, México`;
+async function searchCityTerm(city, state, term) {
+  const query = `${term} en ${city}, ${state}, México`;
   const results = [];
   let pagetoken;
   for (let page = 0; page < 3; page++) {
@@ -108,6 +112,15 @@ async function searchCity(city, state) {
     if (!pagetoken) break;
     // Google exige un pequeño retraso antes de que el next_page_token sea válido.
     await sleep(2200);
+  }
+  return results;
+}
+
+async function searchCity(city, state) {
+  const results = [];
+  for (const term of SEARCH_TERMS) {
+    results.push(...(await searchCityTerm(city, state, term)));
+    await sleep(200);
   }
   return results;
 }
@@ -125,7 +138,7 @@ async function main() {
   const seen = new Map(); // place_id -> row
 
   for (const [city, state] of CITIES) {
-    process.stdout.write(`Buscando "universidad" en ${city}, ${state}... `);
+    process.stdout.write(`Buscando en ${city}, ${state} (${SEARCH_TERMS.length} términos)... `);
     try {
       const results = await searchCity(city, state);
       let added = 0;
