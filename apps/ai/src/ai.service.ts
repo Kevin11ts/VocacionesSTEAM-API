@@ -106,6 +106,24 @@ export class AiService {
   }
 
   /**
+   * Limpieza retroactiva: borra universidades YA GUARDADAS cuyo nombre
+   * coincide con el mismo bloqueo de "nombres basura" (JUNK_NAME_PATTERNS)
+   * que ya se aplica al descubrir — oficinas de gobierno, sindicatos,
+   * estacionamientos, etc. que se colaron en corridas anteriores.
+   */
+  async cleanupJunkUniversities(): Promise<{
+    deleted: number;
+    deletedNames: string[];
+  }> {
+    const all = await this.universityRepository.find({ select: ['id', 'name'] });
+    const junk = all.filter((u) => this.isJunkName(u.name));
+    if (!junk.length) return { deleted: 0, deletedNames: [] };
+
+    await this.universityRepository.delete(junk.map((u) => u.id));
+    return { deleted: junk.length, deletedNames: junk.map((u) => u.name) };
+  }
+
+  /**
    * Carga masiva (CSV/JSON) desde el panel admin. Cada fila se valida y
    * guarda por separado: una fila inválida no debe tirar el lote completo.
    * `name` + `location` (lat/lng) son obligatorios porque sin ellos A8 los
@@ -252,6 +270,92 @@ export class AiService {
       .trim();
   }
 
+  /**
+   * Nombres que Google Places / DENUE devuelven bajo el SCIAN de educación
+   * pero que en realidad son oficinas de gobierno, sindicatos, clínicas o
+   * servicios internos de una institución (no la institución en sí).
+   * Se usa tanto para filtrar candidatos nuevos como para limpiar lo que
+   * ya está guardado (ver cleanupJunkUniversities()).
+   */
+  private static readonly JUNK_NAME_PATTERNS: RegExp[] = [
+    /^ESTACIONAMIENTO\b/i,
+    /^SINDICATO\b/i,
+    /^PRESIDENCIA MUNICIPAL\b/i,
+    /^AYUNTAMIENTO\b/i,
+    /^DELEGACION\b/i,
+    /^SECRETARIA DE EDUCACI[OÓ]N P[UÚ]BLICA$/i, // exacto: la dependencia en sí, no un nombre que solo la incluye
+    /^DESPACHO JUR[IÍ]DICO\b/i,
+    /^DIRECCI[OÓ]N DE (FOMENTO|DEPORTE)\b/i,
+    /^SITIO WEB TEMPORAL\b/i,
+  ];
+
+  private isJunkName(name: string): boolean {
+    const upper = (name || '').toUpperCase().trim();
+    if (!upper) return true;
+    return AiService.JUNK_NAME_PATTERNS.some((re) => re.test(upper));
+  }
+
+  /**
+   * Índice espacial simple (grid de ~110m) para detectar "misma ubicación
+   * física" SIN depender del nombre — dos registros con nombres distintos
+   * (ej. razón social vs. marca comercial) en el mismo edificio deben
+   * contarse como el mismo campus; dos registros con el MISMO nombre en
+   * ciudades distintas NO deben colapsarse. Las coordenadas son la fuente
+   * de verdad, el nombre ya no participa en la decisión.
+   */
+  private static readonly SAME_PLACE_RADIUS_KM = 0.15; // ~150m
+
+  private buildLocationIndex(
+    locations: { latitude: number; longitude: number }[],
+  ): Map<string, { latitude: number; longitude: number }[]> {
+    const index = new Map<string, { latitude: number; longitude: number }[]>();
+    const cellKey = (lat: number, lng: number) =>
+      `${Math.round(lat * 1000)},${Math.round(lng * 1000)}`;
+    for (const loc of locations) {
+      const key = cellKey(loc.latitude, loc.longitude);
+      const list = index.get(key) ?? [];
+      list.push(loc);
+      index.set(key, list);
+    }
+    return index;
+  }
+
+  private addToLocationIndex(
+    index: Map<string, { latitude: number; longitude: number }[]>,
+    loc: { latitude: number; longitude: number },
+  ): void {
+    const key = `${Math.round(loc.latitude * 1000)},${Math.round(loc.longitude * 1000)}`;
+    const list = index.get(key) ?? [];
+    list.push(loc);
+    index.set(key, list);
+  }
+
+  /** true si `loc` cae a <150m de alguna ubicación ya indexada (revisa la celda propia + las 8 vecinas). */
+  private isNearIndexedLocation(
+    index: Map<string, { latitude: number; longitude: number }[]>,
+    loc: { latitude: number; longitude: number },
+  ): boolean {
+    const cellLat = Math.round(loc.latitude * 1000);
+    const cellLng = Math.round(loc.longitude * 1000);
+    for (let dLat = -1; dLat <= 1; dLat++) {
+      for (let dLng = -1; dLng <= 1; dLng++) {
+        const candidates = index.get(`${cellLat + dLat},${cellLng + dLng}`);
+        if (!candidates) continue;
+        for (const c of candidates) {
+          if (
+            haversineKm(
+              { lat: c.latitude, lng: c.longitude },
+              { lat: loc.latitude, lng: loc.longitude },
+            ) < AiService.SAME_PLACE_RADIUS_KM
+          ) {
+            return true;
+          }
+        }
+      }
+    }
+    return false;
+  }
+
   /** Términos de búsqueda: "universidad" no cubre Institutos Tecnológicos, Escuelas Superiores del IPN, etc. */
   private static readonly SEARCH_TERMS = [
     'universidad',
@@ -349,35 +453,11 @@ export class AiService {
     const maxPages = wantedStates ? 3 : 1;
 
     const existing = await this.universityRepository.find({
-      select: ['name', 'location'],
+      select: ['location'],
     });
-    const existingByName = new Map<
-      string,
-      { latitude: number; longitude: number }[]
-    >();
-    for (const u of existing) {
-      const key = this.normalizeName(u.name);
-      const list = existingByName.get(key) ?? [];
-      if (u.location) list.push(u.location);
-      existingByName.set(key, list);
-    }
-
-    /** true si ya hay una universidad con el mismo nombre a <5km (mismo campus, ya importado). */
-    const isSameCampusAsExisting = (
-      name: string,
-      loc?: { latitude: number; longitude: number },
-    ): boolean => {
-      const candidates = existingByName.get(this.normalizeName(name));
-      if (!candidates?.length) return false;
-      if (!loc) return true; // sin coordenadas no podemos distinguir campus: por seguridad, se trata como duplicado
-      return candidates.some(
-        (c) =>
-          haversineKm(
-            { lat: c.latitude, lng: c.longitude },
-            { lat: loc.latitude, lng: loc.longitude },
-          ) < 5,
-      );
-    };
+    const locationIndex = this.buildLocationIndex(
+      existing.map((u) => u.location).filter((l): l is { latitude: number; longitude: number } => !!l),
+    );
 
     const seenPlaceIds = new Set<string>();
     const newRows: Partial<University>[] = [];
@@ -401,7 +481,11 @@ export class AiService {
         }
 
         for (const place of results) {
-          if (!place.place_id || place.business_status === 'CLOSED_PERMANENTLY') {
+          if (
+            !place.place_id ||
+            place.business_status === 'CLOSED_PERMANENTLY' ||
+            this.isJunkName(place.name)
+          ) {
             continue;
           }
           totalFound++;
@@ -414,21 +498,18 @@ export class AiService {
               ? { latitude: place.geometry.location.lat, longitude: place.geometry.location.lng }
               : undefined;
 
-          if (isSameCampusAsExisting(place.name, loc)) {
+          // Duplicado = misma UBICACIÓN física (<150m), sin importar el
+          // nombre: la misma institución a veces se registra con nombres
+          // distintos (razón social vs. marca comercial).
+          if (loc && this.isNearIndexedLocation(locationIndex, loc)) {
             skippedExisting++;
             continue;
           }
-          // Registra este campus para que otro término/ciudad no lo vuelva a agregar en la misma corrida.
-          const key = this.normalizeName(place.name);
-          const list = existingByName.get(key) ?? [];
-          if (loc) list.push(loc);
-          existingByName.set(key, list);
+          if (loc) this.addToLocationIndex(locationIndex, loc);
 
           newRows.push({
             name: place.name,
-            location: loc
-              ? { latitude: loc.latitude, longitude: loc.longitude }
-              : undefined,
+            location: loc,
             address: place.formatted_address,
             rating: place.rating,
           });
@@ -510,34 +591,11 @@ export class AiService {
     }
 
     const existing = await this.universityRepository.find({
-      select: ['name', 'location'],
+      select: ['location'],
     });
-    const existingByName = new Map<
-      string,
-      { latitude: number; longitude: number }[]
-    >();
-    for (const u of existing) {
-      const key = this.normalizeName(u.name);
-      const list = existingByName.get(key) ?? [];
-      if (u.location) list.push(u.location);
-      existingByName.set(key, list);
-    }
-
-    const isSameCampusAsExisting = (
-      name: string,
-      loc?: { latitude: number; longitude: number },
-    ): boolean => {
-      const candidates = existingByName.get(this.normalizeName(name));
-      if (!candidates?.length) return false;
-      if (!loc) return true;
-      return candidates.some(
-        (c) =>
-          haversineKm(
-            { lat: c.latitude, lng: c.longitude },
-            { lat: loc.latitude, lng: loc.longitude },
-          ) < 5,
-      );
-    };
+    const locationIndex = this.buildLocationIndex(
+      existing.map((u) => u.location).filter((l): l is { latitude: number; longitude: number } => !!l),
+    );
 
     const PAGE_SIZE = 300;
     const MAX_PER_STATE = 3000; // salvaguarda: ningún estado debería tener más
@@ -562,7 +620,7 @@ export class AiService {
 
         for (const row of page) {
           const nombre = (row.Razon_social || row.Nombre || '').trim();
-          if (!nombre || /ESTACIONAMIENTO/i.test(row.Nombre || '')) continue;
+          if (!nombre || this.isJunkName(row.Nombre) || this.isJunkName(nombre)) continue;
 
           const lat = parseFloat(row.Latitud);
           const lng = parseFloat(row.Longitud);
@@ -573,14 +631,14 @@ export class AiService {
 
           totalFound++;
 
-          if (isSameCampusAsExisting(nombre, loc)) {
+          // Duplicado = misma UBICACIÓN física (<150m), sin importar el
+          // nombre: DENUE registra cada facultad/departamento por separado
+          // y a veces con razón social distinta a la marca comercial.
+          if (loc && this.isNearIndexedLocation(locationIndex, loc)) {
             skippedExisting++;
             continue;
           }
-          const key = this.normalizeName(nombre);
-          const list = existingByName.get(key) ?? [];
-          if (loc) list.push(loc);
-          existingByName.set(key, list);
+          if (loc) this.addToLocationIndex(locationIndex, loc);
 
           newRows.push({
             name: nombre,

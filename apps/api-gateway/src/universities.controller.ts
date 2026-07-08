@@ -128,6 +128,22 @@ export class AdminUniversitiesController {
     );
   }
 
+  @ApiOperation({
+    summary:
+      'Limpieza retroactiva de nombres basura ya guardados (oficinas de ' +
+      'gobierno, sindicatos, estacionamientos, etc.) — Admin only.',
+  })
+  @ApiResponse({
+    status: 201,
+    description: '{ deleted: number, deletedNames: string[] }',
+  })
+  @Post('cleanup-junk')
+  async cleanupJunkUniversities() {
+    return lastValueFrom(
+      this.aiClient.send({ cmd: 'ai.cleanup-junk-universities' }, {}),
+    );
+  }
+
   @Delete(':id')
   async deleteUniversity(@Param('id') id: string) {
     return lastValueFrom(

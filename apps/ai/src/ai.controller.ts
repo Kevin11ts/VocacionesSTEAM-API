@@ -77,4 +77,9 @@ export class AiController {
   async discoverFromDenue(@Payload() payload: { states: string[] }) {
     return this.aiService.discoverFromDenue(payload?.states);
   }
+
+  @MessagePattern({ cmd: 'ai.cleanup-junk-universities' })
+  async cleanupJunkUniversities() {
+    return this.aiService.cleanupJunkUniversities();
+  }
 }
