@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, Not, IsNull } from 'typeorm';
 import Groq from 'groq-sdk';
 import { AiLog, University } from '@app/common';
 import { haversineKm } from './university-match.engine';
@@ -868,16 +868,23 @@ SALIDA (JSON estricto, sin texto extra):
       throw new Error('GROQ_API_KEY no está configurada en el servidor.');
     }
 
-    const candidates = await this.universityRepository
-      .createQueryBuilder('u')
-      .where('u.website IS NOT NULL')
-      .andWhere("u.website != ''")
-      .andWhere(
-        '(u.steamPrograms IS NULL OR u.costTier IS NULL OR u.tuitionRange IS NULL OR u.modality IS NULL)',
+    // NOTA: se evita SQL crudo con nombres de columna camelCase sin comillas
+    // (createQueryBuilder().where('u.steamPrograms...')) porque Postgres
+    // hace lowercase de identificadores sin comillas — la columna real que
+    // crea TypeORM sí preserva mayúsculas, así que esa condición nunca
+    // encontraba nada (0 candidatos, 0 errores: fallaba en silencio). Se usa
+    // find() + operadores tipados, y el filtro de "campo faltante" en JS.
+    const withWebsite = await this.universityRepository.find({
+      where: { website: Not(IsNull()) },
+      order: { createdAt: 'ASC' },
+    });
+    const candidates = withWebsite
+      .filter(
+        (u) =>
+          u.website?.trim() &&
+          (!u.steamPrograms?.length || !u.costTier || !u.tuitionRange || !u.modality),
       )
-      .orderBy('u.createdAt', 'ASC')
-      .take(limit)
-      .getMany();
+      .slice(0, limit);
 
     let enriched = 0;
     let skipped = 0;
