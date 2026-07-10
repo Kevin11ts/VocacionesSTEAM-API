@@ -857,7 +857,11 @@ SALIDA (JSON estricto, sin texto extra):
    * un campo que el admin ya haya llenado a mano — solo rellena huecos.
    * Guarda `aiEnrichedAt`/`aiEnrichmentSource` como rastro de auditoría.
    */
-  async enrichUniversitiesWithAi(limit = 15): Promise<{
+  // ~7-8s por universidad (fetch del sitio + Groq): con 15 el lote se acerca
+  // a los 2 minutos y arriesga que el proxy de Railway corte la conexión
+  // antes de responder (medido: 3 universidades tardaron 23s reales). Se
+  // baja a 5 (~35-40s) para que un clic siempre alcance a completar.
+  async enrichUniversitiesWithAi(limit = 5): Promise<{
     processed: number;
     enriched: number;
     skipped: number;
