@@ -496,7 +496,7 @@ export class UniversityMatchService {
   ): Promise<{ text: string; tokens: number }> {
     if (!this.groq) throw new Error('Groq no configurado (sin API key)');
     const completion = await this.groq.chat.completions.create({
-      model: 'qwen/qwen3.6-27b',
+      model: 'llama-3.3-70b-versatile',
       messages: [{ role: 'user', content: prompt }],
       temperature: 0.2,
       response_format: { type: 'json_object' },

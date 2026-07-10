@@ -841,7 +841,7 @@ SALIDA (JSON estricto, sin texto extra):
   private async callGroqEnrich(prompt: string): Promise<string> {
     if (!this.groq) throw new Error('Groq no configurado (sin API key)');
     const completion = await this.groq.chat.completions.create({
-      model: 'qwen/qwen3.6-27b',
+      model: 'llama-3.3-70b-versatile',
       messages: [{ role: 'user', content: prompt }],
       temperature: 0.1,
       response_format: { type: 'json_object' },
