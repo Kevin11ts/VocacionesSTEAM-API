@@ -200,6 +200,31 @@ export class AdminUniversitiesController {
 
   @ApiOperation({
     summary:
+      'Enriquece con IA (Groq) universidades con website pero sin ' +
+      'steamPrograms/costTier/tuitionRange/modality — lee el sitio real, ' +
+      'no inventa (Admin only). Solo rellena huecos, nunca sobreescribe.',
+  })
+  @ApiResponse({
+    status: 201,
+    description:
+      '{ processed, enriched, skipped, failed, errors: [{ name, error }] }',
+  })
+  @ApiBody({
+    required: false,
+    schema: { example: { limit: 15 } },
+  })
+  @Post('enrich')
+  async enrichWithAi(@Body() body: { limit?: number }) {
+    return lastValueFrom(
+      this.aiClient.send(
+        { cmd: 'ai.enrich-universities' },
+        { limit: body?.limit },
+      ),
+    );
+  }
+
+  @ApiOperation({
+    summary:
       'Carga masiva de universidades (Admin only) — acepta CSV o JSON en el body',
   })
   @ApiResponse({

@@ -82,4 +82,9 @@ export class AiController {
   async cleanupJunkUniversities() {
     return this.aiService.cleanupJunkUniversities();
   }
+
+  @MessagePattern({ cmd: 'ai.enrich-universities' })
+  async enrichUniversitiesWithAi(@Payload() payload: { limit?: number }) {
+    return this.aiService.enrichUniversitiesWithAi(payload?.limit);
+  }
 }

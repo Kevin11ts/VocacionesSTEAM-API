@@ -43,6 +43,17 @@ export class University {
   @Column({ nullable: true })
   modality: string;
 
+  /**
+   * Rastro de auditoría del enriquecimiento automático por IA (Groq), para
+   * poder revisar o revertir después sin bloquear el guardado automático.
+   */
+  @Column({ type: 'timestamp', nullable: true })
+  aiEnrichedAt: Date | null;
+
+  /** URL del sitio oficial que se descargó y se pasó a la IA para ese enriquecimiento. */
+  @Column({ nullable: true })
+  aiEnrichmentSource: string;
+
   @CreateDateColumn()
   createdAt: Date;
 

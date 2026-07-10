@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import Groq from 'groq-sdk';
 import { AiLog, University } from '@app/common';
 import { haversineKm } from './university-match.engine';
 
@@ -16,6 +17,7 @@ import { haversineKm } from './university-match.engine';
 @Injectable()
 export class AiService {
   private readonly logger = new Logger(AiService.name);
+  private readonly groq: Groq | null;
 
   constructor(
     private readonly configService: ConfigService,
@@ -23,7 +25,10 @@ export class AiService {
     private readonly aiLogRepository: Repository<AiLog>,
     @InjectRepository(University)
     private readonly universityRepository: Repository<University>,
-  ) {}
+  ) {
+    const groqKey = this.configService.get<string>('GROQ_API_KEY');
+    this.groq = groqKey ? new Groq({ apiKey: groqKey }) : null;
+  }
 
   async getLogsStats() {
     const totalLogs = await this.aiLogRepository.count();
@@ -751,5 +756,191 @@ export class AiService {
 
     const result = await this.bulkCreateUniversities(newRows);
     return { totalFound, skippedExisting, ...result };
+  }
+
+  // ==========================================================================
+  //  ENRIQUECIMIENTO CON IA (Groq) — completa steamPrograms/costTier/
+  //  tuitionRange/modality faltantes leyendo el sitio oficial real.
+  // ==========================================================================
+
+  private readonly ENRICH_FETCH_TIMEOUT_MS = 8_000;
+  private readonly ENRICH_GROQ_TIMEOUT_MS = 12_000;
+
+  /** Descarga el HTML del sitio y lo reduce a texto plano (sin scripts/estilos/tags), acotado en tamaño. */
+  private async fetchSiteText(url: string): Promise<string> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.ENRICH_FETCH_TIMEOUT_MS);
+    try {
+      const res = await fetch(url, {
+        signal: controller.signal,
+        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; VocacionesSTEAMBot/1.0)' },
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const html = await res.text();
+      const text = html
+        .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+        .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+        .replace(/<[^>]+>/g, ' ')
+        .replace(/&nbsp;/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+      if (text.length < 50) {
+        throw new Error('La página no devolvió suficiente texto (¿SPA sin contenido server-rendered?)');
+      }
+      return text.slice(0, 6000);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  private withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(`Timeout de ${ms}ms en ${label}`)), ms);
+      promise.then(
+        (v) => { clearTimeout(timer); resolve(v); },
+        (e) => { clearTimeout(timer); reject(e); },
+      );
+    });
+  }
+
+  private buildEnrichPrompt(universityName: string, siteText: string): string {
+    return `SISTEMA:
+Eres un asistente que extrae datos EXPLÍCITOS de una página web oficial de una
+universidad mexicana. NUNCA inventes ni completes con conocimiento externo o
+suposiciones — solo reporta lo que esté literalmente en el texto dado.
+
+REGLAS ESTRICTAS:
+1. Si un dato no aparece explícitamente en el texto, devuélvelo vacío/null.
+   NO asumas, NO generalices a partir del nombre de la universidad.
+2. "steamPrograms": solo carreras/programas de las áreas Ciencia, Tecnología,
+   Ingeniería, Artes o Matemáticas que el texto mencione literalmente.
+   "area" debe ser una de: ciencia | tecnologia | ingenieria | artes | matematicas.
+3. "costTier": SOLO si el texto indica claramente que es pública/gratuita
+   ("public"), de costo accesible ("affordable"), o privada de alto costo
+   ("private-premium"). Si no es claro, null.
+4. "tuitionRange": solo si el texto menciona colegiatura/costo en cifras o
+   rango explícito. Si no, null.
+5. "modality": "presencial" | "en línea" | "híbrida" SOLO si el texto lo dice.
+
+UNIVERSIDAD: ${universityName}
+
+TEXTO DE LA PÁGINA (puede estar incompleto o no tener toda la info):
+"""
+${siteText}
+"""
+
+SALIDA (JSON estricto, sin texto extra):
+{
+  "steamPrograms": [{ "name": "string", "area": "ciencia|tecnologia|ingenieria|artes|matematicas" }],
+  "costTier": "public" | "affordable" | "private-premium" | null,
+  "tuitionRange": "string" | null,
+  "modality": "string" | null
+}`;
+  }
+
+  private async callGroqEnrich(prompt: string): Promise<string> {
+    if (!this.groq) throw new Error('Groq no configurado (sin API key)');
+    const completion = await this.groq.chat.completions.create({
+      model: 'qwen/qwen3.6-27b',
+      messages: [{ role: 'user', content: prompt }],
+      temperature: 0.1,
+      response_format: { type: 'json_object' },
+      max_tokens: 2000,
+    });
+    return completion.choices[0]?.message?.content || '{}';
+  }
+
+  /**
+   * Completa campos faltantes (steamPrograms/costTier/tuitionRange/modality)
+   * de universidades que ya tienen `website` guardado, leyendo su sitio real
+   * y extrayendo con Groq bajo un prompt anti-alucinación. NUNCA sobreescribe
+   * un campo que el admin ya haya llenado a mano — solo rellena huecos.
+   * Guarda `aiEnrichedAt`/`aiEnrichmentSource` como rastro de auditoría.
+   */
+  async enrichUniversitiesWithAi(limit = 15): Promise<{
+    processed: number;
+    enriched: number;
+    skipped: number;
+    failed: number;
+    errors: { name: string; error: string }[];
+  }> {
+    if (!this.groq) {
+      throw new Error('GROQ_API_KEY no está configurada en el servidor.');
+    }
+
+    const candidates = await this.universityRepository
+      .createQueryBuilder('u')
+      .where('u.website IS NOT NULL')
+      .andWhere("u.website != ''")
+      .andWhere(
+        '(u.steamPrograms IS NULL OR u.costTier IS NULL OR u.tuitionRange IS NULL OR u.modality IS NULL)',
+      )
+      .orderBy('u.createdAt', 'ASC')
+      .take(limit)
+      .getMany();
+
+    let enriched = 0;
+    let skipped = 0;
+    const errors: { name: string; error: string }[] = [];
+
+    for (const uni of candidates) {
+      try {
+        const website = uni.website.startsWith('http') ? uni.website : `http://${uni.website}`;
+        const siteText = await this.fetchSiteText(website);
+        const prompt = this.buildEnrichPrompt(uni.name, siteText);
+        const raw = await this.withTimeout(
+          this.callGroqEnrich(prompt),
+          this.ENRICH_GROQ_TIMEOUT_MS,
+          'Groq (enriquecimiento)',
+        );
+        const cleaned = raw.replace(/```json|```/g, '').trim();
+        const parsed = JSON.parse(cleaned);
+
+        let changed = false;
+        if (!uni.steamPrograms?.length && Array.isArray(parsed.steamPrograms) && parsed.steamPrograms.length) {
+          const validAreas = new Set(['ciencia', 'tecnologia', 'ingenieria', 'artes', 'matematicas']);
+          const validPrograms = parsed.steamPrograms.filter(
+            (p: any) => p?.name && validAreas.has(p?.area),
+          );
+          if (validPrograms.length) {
+            uni.steamPrograms = validPrograms;
+            changed = true;
+          }
+        }
+        if (!uni.costTier && ['public', 'affordable', 'private-premium'].includes(parsed.costTier)) {
+          uni.costTier = parsed.costTier;
+          changed = true;
+        }
+        if (!uni.tuitionRange && typeof parsed.tuitionRange === 'string' && parsed.tuitionRange.trim()) {
+          uni.tuitionRange = parsed.tuitionRange.trim();
+          changed = true;
+        }
+        if (!uni.modality && typeof parsed.modality === 'string' && parsed.modality.trim()) {
+          uni.modality = parsed.modality.trim();
+          changed = true;
+        }
+
+        uni.aiEnrichedAt = new Date();
+        uni.aiEnrichmentSource = website;
+        await this.universityRepository.save(uni);
+
+        if (changed) {
+          enriched++;
+        } else {
+          skipped++;
+        }
+      } catch (err) {
+        this.logger.warn(`Enriquecimiento falló para "${uni.name}": ${err.message || err}`);
+        errors.push({ name: uni.name, error: err.message || String(err) });
+      }
+    }
+
+    return {
+      processed: candidates.length,
+      enriched,
+      skipped,
+      failed: errors.length,
+      errors,
+    };
   }
 }
