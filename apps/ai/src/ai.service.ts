@@ -896,6 +896,10 @@ SALIDA (JSON estricto, sin texto extra):
             this.normalizeName(u.name).includes(wanted) ||
             this.normalizeName(u.address || '').includes(wanted)),
       )
+      // Nunca intentadas primero (sort estable: dentro de cada grupo se
+      // conserva el orden por createdAt); las ya intentadas —p. ej. con
+      // sitio muerto— se reintentan solo al agotarse las pendientes.
+      .sort((a, b) => (a.aiEnrichedAt ? 1 : 0) - (b.aiEnrichedAt ? 1 : 0))
       .slice(0, limit);
 
     let enriched = 0;
@@ -951,6 +955,18 @@ SALIDA (JSON estricto, sin texto extra):
       } catch (err) {
         this.logger.warn(`Enriquecimiento falló para "${uni.name}": ${err.message || err}`);
         errors.push({ name: uni.name, error: err.message || String(err) });
+        // Registrar el intento también en fallo (sitio muerto/DNS caído es
+        // común en URLs del censo DENUE): sin esto, las mismas filas
+        // fallidas encabezan el lote en CADA clic y el avance se atasca.
+        // El orden "nunca intentadas primero" (abajo) las manda al final;
+        // se reintentan solo cuando ya no quedan pendientes nuevas.
+        try {
+          uni.aiEnrichedAt = new Date();
+          uni.aiEnrichmentSource = uni.website;
+          await this.universityRepository.save(uni);
+        } catch {
+          /* si ni siquiera se puede guardar el intento, no hay nada que hacer */
+        }
       }
     }
 
