@@ -861,7 +861,11 @@ SALIDA (JSON estricto, sin texto extra):
   // a los 2 minutos y arriesga que el proxy de Railway corte la conexión
   // antes de responder (medido: 3 universidades tardaron 23s reales). Se
   // baja a 5 (~35-40s) para que un clic siempre alcance a completar.
-  async enrichUniversitiesWithAi(limit = 5): Promise<{
+  //
+  // `filter` (opcional): texto a buscar en nombre/dirección (sin acentos,
+  // sin mayúsculas) para priorizar una zona — sin él, el orden por
+  // createdAt haría imposible llegar a estados descubiertos al final.
+  async enrichUniversitiesWithAi(limit = 5, filter?: string): Promise<{
     processed: number;
     enriched: number;
     skipped: number;
@@ -882,11 +886,15 @@ SALIDA (JSON estricto, sin texto extra):
       where: { website: Not(IsNull()) },
       order: { createdAt: 'ASC' },
     });
+    const wanted = filter ? this.normalizeName(filter) : '';
     const candidates = withWebsite
       .filter(
         (u) =>
           u.website?.trim() &&
-          (!u.steamPrograms?.length || !u.costTier || !u.tuitionRange || !u.modality),
+          (!u.steamPrograms?.length || !u.costTier || !u.tuitionRange || !u.modality) &&
+          (!wanted ||
+            this.normalizeName(u.name).includes(wanted) ||
+            this.normalizeName(u.address || '').includes(wanted)),
       )
       .slice(0, limit);
 

@@ -84,7 +84,12 @@ export class AiController {
   }
 
   @MessagePattern({ cmd: 'ai.enrich-universities' })
-  async enrichUniversitiesWithAi(@Payload() payload: { limit?: number }) {
-    return this.aiService.enrichUniversitiesWithAi(payload?.limit);
+  async enrichUniversitiesWithAi(
+    @Payload() payload: { limit?: number; filter?: string },
+  ) {
+    return this.aiService.enrichUniversitiesWithAi(
+      payload?.limit,
+      payload?.filter,
+    );
   }
 }

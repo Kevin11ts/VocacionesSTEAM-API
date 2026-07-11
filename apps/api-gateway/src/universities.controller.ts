@@ -211,14 +211,14 @@ export class AdminUniversitiesController {
   })
   @ApiBody({
     required: false,
-    schema: { example: { limit: 15 } },
+    schema: { example: { limit: 5, filter: 'Orizaba' } },
   })
   @Post('enrich')
-  async enrichWithAi(@Body() body: { limit?: number }) {
+  async enrichWithAi(@Body() body: { limit?: number; filter?: string }) {
     return lastValueFrom(
       this.aiClient.send(
         { cmd: 'ai.enrich-universities' },
-        { limit: body?.limit },
+        { limit: body?.limit, filter: body?.filter },
       ),
     );
   }
