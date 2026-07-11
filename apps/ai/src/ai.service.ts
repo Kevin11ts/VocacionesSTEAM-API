@@ -84,6 +84,40 @@ export class AiService {
     return this.universityRepository.find();
   }
 
+  /**
+   * Universidades de NUESTRA base cercanas a una coordenada, con todos los
+   * campos (programas/costo/modalidad, incluidos los enriquecidos por IA).
+   * Alimenta la sección "cerca de ti" de Explorar, que antes venía solo de
+   * Google Places y por eso mostraba únicamente datos básicos del mapa.
+   */
+  async getNearbyUniversities(
+    lat: number,
+    lng: number,
+    radiusKm = 25,
+    limit = 30,
+  ): Promise<(University & { distanceKm: number })[]> {
+    if (typeof lat !== 'number' || typeof lng !== 'number' || Number.isNaN(lat) || Number.isNaN(lng)) {
+      throw new Error('lat y lng son obligatorios');
+    }
+    const all = await this.universityRepository.find();
+    return all
+      .filter(
+        (u) =>
+          typeof u.location?.latitude === 'number' &&
+          typeof u.location?.longitude === 'number',
+      )
+      .map((u) => ({
+        ...u,
+        distanceKm: haversineKm(
+          { lat, lng },
+          { lat: u.location.latitude, lng: u.location.longitude },
+        ),
+      }))
+      .filter((u) => u.distanceKm <= radiusKm)
+      .sort((a, b) => a.distanceKm - b.distanceKm)
+      .slice(0, limit);
+  }
+
   async createUniversity(data: Partial<University>): Promise<University> {
     const university = this.universityRepository.create(data);
     return this.universityRepository.save(university);
@@ -764,12 +798,16 @@ export class AiService {
   // ==========================================================================
 
   private readonly ENRICH_FETCH_TIMEOUT_MS = 8_000;
+  private readonly ENRICH_SUBPAGE_TIMEOUT_MS = 5_000;
   private readonly ENRICH_GROQ_TIMEOUT_MS = 12_000;
 
-  /** Descarga el HTML del sitio y lo reduce a texto plano (sin scripts/estilos/tags), acotado en tamaño. */
-  private async fetchSiteText(url: string): Promise<string> {
+  /** Descarga una página y devuelve su HTML crudo + el texto plano limpio. */
+  private async fetchPage(
+    url: string,
+    timeoutMs: number,
+  ): Promise<{ html: string; text: string }> {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.ENRICH_FETCH_TIMEOUT_MS);
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
       const res = await fetch(url, {
         signal: controller.signal,
@@ -784,13 +822,76 @@ export class AiService {
         .replace(/&nbsp;/g, ' ')
         .replace(/\s+/g, ' ')
         .trim();
-      if (text.length < 50) {
-        throw new Error('La página no devolvió suficiente texto (¿SPA sin contenido server-rendered?)');
-      }
-      return text.slice(0, 6000);
+      return { html, text };
     } finally {
       clearTimeout(timer);
     }
+  }
+
+  /**
+   * Extrae de la portada hasta 2 enlaces internos que apunten a oferta
+   * educativa / carreras / costos — las páginas donde de verdad vive la
+   * info que la portada casi nunca trae.
+   */
+  private extractCandidateLinks(html: string, baseUrl: string): string[] {
+    // Señal fuerte = página que casi seguro lista carreras/costos.
+    const STRONG = /licenciatura|oferta|carrera|colegiatura|costo/i;
+    const WEAK = /ingenier|programa|academic|admisi|estudia|inscripci/i;
+    const found: { url: string; score: number }[] = [];
+    const re = /<a\b[^>]*href=["']([^"'#]+)["'][^>]*>([\s\S]{0,200}?)<\/a>/gi;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(html)) !== null && found.length < 12) {
+      const href = m[1];
+      const label = m[2].replace(/<[^>]+>/g, ' ');
+      const sample = `${href} ${label}`;
+      const score = STRONG.test(sample) ? 2 : WEAK.test(sample) ? 1 : 0;
+      if (!score) continue;
+      try {
+        const abs = new URL(href, baseUrl);
+        if (!/^https?:$/.test(abs.protocol)) continue;
+        if (abs.hostname !== new URL(baseUrl).hostname) continue; // solo mismo dominio
+        const clean = abs.toString();
+        if (!found.some((f) => f.url === clean)) found.push({ url: clean, score });
+      } catch {
+        /* href inválido: se ignora */
+      }
+    }
+    // Orden estable: fuertes primero, conservando el orden de aparición.
+    return found
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 2)
+      .map((f) => f.url);
+  }
+
+  /**
+   * Texto del sitio para la IA: portada + hasta 2 subpáginas relevantes
+   * (oferta educativa/costos), descargadas en paralelo. La IA sigue
+   * limitada a extraer SOLO de este texto — se amplía el terreno leído,
+   * no el permiso de inventar.
+   */
+  private async fetchSiteText(url: string): Promise<string> {
+    const home = await this.fetchPage(url, this.ENRICH_FETCH_TIMEOUT_MS);
+    if (home.text.length < 50 && !home.html) {
+      throw new Error('La página no devolvió contenido');
+    }
+    let combined = home.text.slice(0, 6000);
+
+    const subLinks = this.extractCandidateLinks(home.html, url);
+    if (subLinks.length) {
+      const subs = await Promise.allSettled(
+        subLinks.map((link) => this.fetchPage(link, this.ENRICH_SUBPAGE_TIMEOUT_MS)),
+      );
+      subs.forEach((s, i) => {
+        if (s.status === 'fulfilled' && s.value.text.length >= 50) {
+          combined += `\n\n[SUBPÁGINA ${subLinks[i]}]\n${s.value.text.slice(0, 3000)}`;
+        }
+      });
+    }
+
+    if (combined.trim().length < 50) {
+      throw new Error('La página no devolvió suficiente texto (¿SPA sin contenido server-rendered?)');
+    }
+    return combined;
   }
 
   private withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {

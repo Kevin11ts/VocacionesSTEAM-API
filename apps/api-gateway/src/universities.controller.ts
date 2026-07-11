@@ -5,6 +5,7 @@ import {
   Put,
   Delete,
   Param,
+  Query,
   Body,
   UseGuards,
   Inject,
@@ -35,6 +36,34 @@ export class UniversitiesController {
   async getUniversities() {
     return lastValueFrom(
       this.aiClient.send({ cmd: 'ai.get-universities' }, {}),
+    );
+  }
+
+  @ApiOperation({
+    summary:
+      'Universidades de la BD cercanas a una coordenada (con programas/costo/modalidad) — alimenta "cerca de ti"',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Lista ordenada por distancia, cada una con distanceKm',
+  })
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @Get('nearby')
+  async getNearbyUniversities(
+    @Query('lat') lat: string,
+    @Query('lng') lng: string,
+    @Query('radiusKm') radiusKm?: string,
+  ) {
+    return lastValueFrom(
+      this.aiClient.send(
+        { cmd: 'ai.nearby-universities' },
+        {
+          lat: parseFloat(lat),
+          lng: parseFloat(lng),
+          radiusKm: radiusKm ? parseFloat(radiusKm) : undefined,
+        },
+      ),
     );
   }
 

@@ -42,6 +42,19 @@ export class AiController {
     return this.aiService.getUniversities();
   }
 
+  @MessagePattern({ cmd: 'ai.nearby-universities' })
+  async getNearbyUniversities(
+    @Payload()
+    payload: { lat: number; lng: number; radiusKm?: number; limit?: number },
+  ) {
+    return this.aiService.getNearbyUniversities(
+      payload?.lat,
+      payload?.lng,
+      payload?.radiusKm,
+      payload?.limit,
+    );
+  }
+
   @MessagePattern({ cmd: 'ai.create-university' })
   async createUniversity(@Payload() data: any) {
     return this.aiService.createUniversity(data);
