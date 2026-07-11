@@ -138,6 +138,11 @@ export class UniversityMatchService {
         explanation:
           adjustment?.explanation || this.deterministicExplanation(c),
         websiteUrl: c.websiteUrl,
+        tuitionRange:
+          c.tuitionRange === 'información no disponible' ? undefined : c.tuitionRange,
+        modality:
+          c.modality === 'información no disponible' ? undefined : c.modality,
+        steamPrograms: c.steamPrograms,
         googleMapsData: { rating: c.rating, address: c.address },
         location: c.location,
         scoreAdjustmentReason: adjustment?.scoreAdjustmentReason,
@@ -239,6 +244,7 @@ export class UniversityMatchService {
         tuitionRange: university.tuitionRange ?? 'información no disponible',
         rating,
         modality: university.modality ?? 'información no disponible',
+        steamPrograms: university.steamPrograms ?? undefined,
         // baseScore NEUTRAL (preferencia 'any'): es lo que ve la IA y lo
         // que ancla el cacheKey. Así cambiar el filtro de costo NO invalida
         // el caché ni re-llama a la IA; el bono por preferencia se aplica

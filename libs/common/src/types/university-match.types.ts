@@ -41,6 +41,8 @@ export interface UniversityCandidate {
   baseScore: number;
   websiteUrl?: string;
   address?: string;
+  /** Oferta educativa completa (no solo la carrera que hizo match duro). */
+  steamPrograms?: { name: string; area: string }[];
   /** Coordenadas de la universidad (para el mapa del frontend). */
   location?: { lat: number; lng: number };
 }
@@ -54,6 +56,12 @@ export interface UniversityMatch {
   costTier: CostTier;
   explanation: string;
   websiteUrl?: string;
+  /** Rango de colegiatura legible (dato duro, no lo genera la IA). */
+  tuitionRange?: string;
+  /** presencial | en línea | híbrida. */
+  modality?: string;
+  /** Oferta educativa completa (no solo matchedCareer). */
+  steamPrograms?: { name: string; area: string }[];
   googleMapsData?: { rating?: number; address?: string };
   /** Coordenadas de la universidad (para el mapa del frontend). */
   location?: { lat: number; lng: number };
