@@ -34,6 +34,7 @@ import {
   CalibrationDecksController,
   AdminCalibrationDecksController,
 } from './calibration-decks.controller';
+import { MotorGatewayController } from './motor.controller';
 
 @Module({
   imports: [
@@ -110,6 +111,7 @@ import {
     SimulatorGatewayController,
     CalibrationDecksController,
     AdminCalibrationDecksController,
+    MotorGatewayController,
   ],
   providers: [JwtStrategy, JwtRefreshStrategy, GoogleStrategy, RolesGuard],
 })

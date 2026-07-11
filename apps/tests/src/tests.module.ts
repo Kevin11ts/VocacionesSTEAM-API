@@ -4,7 +4,9 @@ import { TestsService } from './tests.service';
 import { CatalogService } from './profile/catalog.service';
 import { ProfileService } from './profile/profile.service';
 import { CalibrationDeckService } from './calibration-deck.service';
+import { MotorVocacionalService } from './motor/motor-vocacional.service';
 import {
+  AlgorithmRun,
   CommonModule,
   User,
   VocationalTest,
@@ -47,9 +49,16 @@ import { TypeOrmModule } from '@nestjs/typeorm';
       VocationCatalogItem,
       CareerCatalogItem,
       AxisMeta,
+      AlgorithmRun,
     ]),
   ],
   controllers: [TestsController],
-  providers: [TestsService, CatalogService, ProfileService, CalibrationDeckService],
+  providers: [
+    TestsService,
+    CatalogService,
+    ProfileService,
+    CalibrationDeckService,
+    MotorVocacionalService,
+  ],
 })
 export class TestsModule {}

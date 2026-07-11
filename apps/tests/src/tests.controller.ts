@@ -9,6 +9,7 @@ import { TestsService } from './tests.service';
 import { CatalogService } from './profile/catalog.service';
 import { ProfileService } from './profile/profile.service';
 import { CalibrationDeckService } from './calibration-deck.service';
+import { MotorVocacionalService } from './motor/motor-vocacional.service';
 import { CalibrationDeck } from '@app/common';
 
 @Controller()
@@ -18,7 +19,33 @@ export class TestsController {
     private readonly catalogService: CatalogService,
     private readonly profileService: ProfileService,
     private readonly calibrationDeckService: CalibrationDeckService,
+    private readonly motorVocacionalService: MotorVocacionalService,
   ) {}
+
+  // --- Motor Vocacional API remoto (A0-A8, obra independiente) ---
+  @MessagePattern({ cmd: 'tests.motor-compute-profile' })
+  async motorComputeProfile(
+    @Payload()
+    payload: {
+      userId: string;
+      request: ProfileComputationRequest;
+    },
+  ) {
+    return this.motorVocacionalService.computeProfileRemote(
+      payload.userId,
+      payload.request,
+    );
+  }
+
+  @MessagePattern({ cmd: 'tests.motor-get-runs' })
+  async motorGetRuns(@Payload() payload: { userId: string; limit?: number }) {
+    return this.motorVocacionalService.getRuns(payload.userId, payload.limit);
+  }
+
+  @MessagePattern({ cmd: 'tests.motor-get-metrics' })
+  async motorGetMetrics() {
+    return this.motorVocacionalService.getMetrics();
+  }
 
   // --- Motor de perfil vocacional (A1-A7) ---
   @MessagePattern({ cmd: 'tests.compute-profile' })

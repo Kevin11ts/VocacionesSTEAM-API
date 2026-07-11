@@ -274,7 +274,7 @@ export class ProfileService {
   //  Carga de evidencia guardada
   // =========================================================================
 
-  private async loadStoredCalibrations(
+  async loadStoredCalibrations(
     userId: string,
   ): Promise<CalibrationModuleResult[]> {
     const rows = await this.calibrationRepository.find({
@@ -294,7 +294,7 @@ export class ProfileService {
     }));
   }
 
-  private async loadStoredSimulatorResults(
+  async loadStoredSimulatorResults(
     userId: string,
   ): Promise<SimulatorAffinityResult[]> {
     const rows = await this.userHistoryRepository.find({

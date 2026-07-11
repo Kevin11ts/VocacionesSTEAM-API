@@ -17,6 +17,7 @@ export * from './entities/user-history.entity';
 export * from './entities/vocation-catalog.entity';
 export * from './entities/career-catalog.entity';
 export * from './entities/axis-meta.entity';
+export * from './entities/algorithm-run.entity';
 export * from './database/database.module';
 export * from './config/config.module';
 
