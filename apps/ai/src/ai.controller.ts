@@ -81,6 +81,16 @@ export class AiController {
     return this.aiService.bulkCreateUniversities(rows);
   }
 
+  @MessagePattern({ cmd: 'ai.export-universities' })
+  async exportUniversities(@Payload() payload: { filter?: string }) {
+    return this.aiService.exportUniversities(payload?.filter);
+  }
+
+  @MessagePattern({ cmd: 'ai.bulk-update-universities' })
+  async bulkUpdateUniversities(@Payload() rows: any[]) {
+    return this.aiService.bulkUpdateUniversities(rows);
+  }
+
   @MessagePattern({ cmd: 'ai.discover-universities' })
   async discoverUniversities(@Payload() payload: { states?: string[] }) {
     return this.aiService.discoverUniversities(payload?.states);

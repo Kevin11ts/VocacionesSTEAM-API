@@ -277,6 +277,41 @@ export class AdminUniversitiesController {
       this.aiClient.send({ cmd: 'ai.bulk-create-universities' }, rows),
     );
   }
+
+  @ApiOperation({
+    summary:
+      'Exporta universidades (con id) como JSON para editar a mano y ' +
+      'reimportar con bulk-update. `filter` (opcional): texto en nombre/dirección.',
+  })
+  @ApiResponse({ status: 200, description: 'Arreglo de universidades completas' })
+  @Get('export')
+  async exportUniversities(@Query('filter') filter?: string) {
+    return lastValueFrom(
+      this.aiClient.send({ cmd: 'ai.export-universities' }, { filter }),
+    );
+  }
+
+  @ApiOperation({
+    summary:
+      'Actualiza universidades EXISTENTES por id (contraparte de export) — ' +
+      'a diferencia de bulk-import, no crea nuevas.',
+  })
+  @ApiResponse({
+    status: 201,
+    description: '{ updated, failed, errors: [{ index, name, error }] }',
+  })
+  @ApiBody({
+    schema: { example: { universities: [{ id: 'uuid-existente', costTier: 'public' }] } },
+  })
+  @Post('bulk-update')
+  async bulkUpdate(@Body() body: { universities: any[] }) {
+    return lastValueFrom(
+      this.aiClient.send(
+        { cmd: 'ai.bulk-update-universities' },
+        body.universities || [],
+      ),
+    );
+  }
 }
 
 /**

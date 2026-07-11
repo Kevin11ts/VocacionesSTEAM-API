@@ -287,6 +287,68 @@ export class AiService {
   }
 
   /**
+   * Exporta universidades (con `id`) para editar a mano y reimportar con
+   * bulkUpdateUniversities(). `filter` (opcional): texto en nombre/
+   * dirección — mismo criterio normalizado que el resto del módulo, para
+   * exportar por zona/estado en vez de las ~7,000 de un jalón.
+   */
+  async exportUniversities(filter?: string): Promise<University[]> {
+    const all = await this.universityRepository.find({
+      order: { createdAt: 'ASC' },
+    });
+    if (!filter) return all;
+    const wanted = this.normalizeName(filter);
+    return all.filter(
+      (u) =>
+        this.normalizeName(u.name).includes(wanted) ||
+        this.normalizeName(u.address || '').includes(wanted),
+    );
+  }
+
+  /**
+   * Contraparte de exportUniversities(): actualiza registros EXISTENTES por
+   * `id` (a diferencia de bulkCreateUniversities, que solo crea). Pensado
+   * para el flujo "exportar JSON → llenar a mano → reimportar" — la fuente
+   * más confiable posible, porque no depende de que la IA adivine nada.
+   * Sobreescribe con lo que venga en cada fila (igual que editar una por
+   * una en el panel); una fila sin `id` o con `id` inexistente se reporta
+   * como error, no crea nada nuevo (para eso ya existe bulk-import).
+   */
+  async bulkUpdateUniversities(rows: Partial<University>[]): Promise<{
+    updated: number;
+    failed: number;
+    errors: { index: number; name?: string; error: string }[];
+  }> {
+    const errors: { index: number; name?: string; error: string }[] = [];
+    let updated = 0;
+
+    for (let index = 0; index < rows.length; index++) {
+      const row = rows[index];
+      const id = (row as any)?.id;
+      const name = typeof row?.name === 'string' ? row.name.trim() : undefined;
+
+      if (!id || typeof id !== 'string') {
+        errors.push({ index, name, error: 'Falta "id" (usa el export, no edites/borres ese campo)' });
+        continue;
+      }
+      try {
+        const existing = await this.universityRepository.findOne({ where: { id } });
+        if (!existing) {
+          errors.push({ index, name, error: `No existe una universidad con id "${id}"` });
+          continue;
+        }
+        const { id: _ignored, createdAt, updatedAt, ...fields } = row as any;
+        await this.universityRepository.update(id, fields);
+        updated++;
+      } catch (err) {
+        errors.push({ index, name, error: err.message || String(err) });
+      }
+    }
+
+    return { updated, failed: errors.length, errors };
+  }
+
+  /**
    * Capitales de los 32 estados + algunas zonas metropolitanas grandes con
    * alta densidad de universidades que no son la capital administrativa.
    * Mismo criterio que scripts/discover-universities.js, pero limitado a
