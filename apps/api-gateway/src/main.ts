@@ -3,11 +3,17 @@ import { ApiGatewayModule } from './api-gateway.module';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { json, urlencoded } from 'express';
 import { RpcToHttpExceptionFilter } from './filters/rpc-exception.filter';
 
 async function bootstrap() {
   const app = await NestFactory.create(ApiGatewayModule);
   app.setGlobalPrefix('api/v1');
+
+  // Default de Express/body-parser es 100kb — muy poco para lotes grandes
+  // de "Importar JSON" de universidades (varios archivos combinados).
+  app.use(json({ limit: '5mb' }));
+  app.use(urlencoded({ extended: true, limit: '5mb' }));
   const corsOrigins = (process.env.CORS_ORIGIN || '*')
     .split(',')
     .map((o) => o.trim());
