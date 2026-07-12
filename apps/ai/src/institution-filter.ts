@@ -94,3 +94,67 @@ export const DISCARDED_INSTITUTION_TYPES = new Set([
   'permanently_closed',
   'other',
 ]);
+
+/**
+ * Nombres de DIVISIÓN ACADÉMICA / centro universitario / facultad genérica
+ * que la IA a veces confunde con una carrera al leer páginas de "oferta
+ * académica" organizadas por centros temáticos (patrón típico de
+ * universidades tipo UDG: "Centro Universitario de Ciencias de la Salud",
+ * etc.). El HTML→texto plano de fetchPage() no conserva jerarquía, así que
+ * esos encabezados de sección quedan indistinguibles de un ítem de lista de
+ * carreras — este filtro es la segunda red, aplicado después de que Groq
+ * responde, sobre cada `steamPrograms[].name`.
+ *
+ * Coincidencia EXACTA (no substring): un programa real puede legítimamente
+ * mencionar estas palabras dentro de un nombre más largo y específico
+ * (ej. "Licenciatura en Humanidades" si de verdad es una carrera con ese
+ * nombre exacto NO debería colapsar con esto porque no es igual a
+ * "humanidades" a secas) — por eso se compara el nombre completo
+ * normalizado, no si lo contiene.
+ */
+const GENERIC_PROGRAM_NAMES = new Set([
+  'ciencia',
+  'tecnologia',
+  'ingenieria',
+  'artes',
+  'matematicas',
+  'ciencias de la salud',
+  'ciencias biologicas y agropecuarias',
+  'ciencias economico administrativas',
+  'economico administrativa',
+  'economico administrativas',
+  'humanidades',
+  'ciencias sociales y humanidades',
+  'ciencias exactas e ingenierias',
+  'arte arquitectura y diseno',
+  'tecnica',
+]);
+
+/** Prefijos de división/centro/facultad que NUNCA son, por sí solos, el nombre de una carrera. */
+const GENERIC_PROGRAM_PREFIXES: RegExp[] = [
+  /^centro universitario\b/i,
+  /^divisi[oó]n de\b/i,
+  /^facultad de$/i, // exacto: "Facultad de" sin nada después
+  /^escuela de$/i, // exacto: "Escuela de" sin nada después
+];
+
+function normalizeProgramName(value: string): string {
+  return (value || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .trim();
+}
+
+/**
+ * true si `name` es un nombre de división/centro/facultad genérico, NO una
+ * carrera real — se usa para filtrar la respuesta de Groq en steamPrograms
+ * antes de guardarla (enrichExistingUniversity, validateNewCandidate,
+ * enrichUniversitiesWithAi).
+ */
+export function isGenericProgramName(name: string): boolean {
+  const normalized = normalizeProgramName(name);
+  if (!normalized) return true;
+  if (GENERIC_PROGRAM_NAMES.has(normalized)) return true;
+  return GENERIC_PROGRAM_PREFIXES.some((re) => re.test(normalized));
+}

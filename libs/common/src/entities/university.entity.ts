@@ -43,6 +43,10 @@ export class University {
   @Column({ nullable: true })
   modality: string;
 
+  /** Fecha/periodo de examen de admisión, ficha o convocatoria (texto libre, solo si el sitio lo menciona explícitamente). */
+  @Column({ nullable: true })
+  admissionDates: string;
+
   /**
    * Rastro de auditoría del enriquecimiento automático por IA (Groq), para
    * poder revisar o revertir después sin bloquear el guardado automático.

@@ -42,6 +42,8 @@ export interface UniversityCandidate {
   tuitionRange?: string;
   rating?: number;
   modality?: string;
+  /** Fecha/periodo de examen de admisión, ficha o convocatoria (solo si el sitio lo menciona explícitamente). */
+  admissionDates?: string;
   baseScore: number;
   websiteUrl?: string;
   address?: string;
@@ -72,6 +74,8 @@ export interface UniversityMatch {
   tuitionRange?: string;
   /** presencial | en línea | híbrida. */
   modality?: string;
+  /** Fecha/periodo de examen de admisión, ficha o convocatoria (solo si el sitio lo menciona explícitamente). */
+  admissionDates?: string;
   /** Oferta educativa completa (no solo matchedCareer). */
   steamPrograms?: { name: string; area: string }[];
   googleMapsData?: { rating?: number; address?: string };

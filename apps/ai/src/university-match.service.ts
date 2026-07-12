@@ -160,6 +160,7 @@ export class UniversityMatchService {
           c.tuitionRange === 'información no disponible' ? undefined : c.tuitionRange,
         modality:
           c.modality === 'información no disponible' ? undefined : c.modality,
+        admissionDates: c.admissionDates,
         steamPrograms: c.steamPrograms,
         googleMapsData: { rating: c.rating, address: c.address },
         location: c.location,
@@ -275,6 +276,7 @@ export class UniversityMatchService {
         tuitionRange: university.tuitionRange ?? 'información no disponible',
         rating,
         modality: university.modality ?? 'información no disponible',
+        admissionDates: university.admissionDates ?? undefined,
         steamPrograms: university.steamPrograms ?? undefined,
         // baseScore NEUTRAL (preferencia 'any'): es lo que ve la IA y lo
         // que ancla el cacheKey. Así cambiar el filtro de costo NO invalida

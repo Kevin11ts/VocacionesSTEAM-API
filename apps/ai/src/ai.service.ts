@@ -8,6 +8,7 @@ import { haversineKm } from './university-match.engine';
 import {
   DISCARDED_INSTITUTION_TYPES,
   isExcludedInstitutionName,
+  isGenericProgramName,
 } from './institution-filter';
 
 /**
@@ -172,7 +173,19 @@ export class AiService {
     radiusKm = 25,
   ): Promise<(University & { distanceKm: number })[]> {
     const dbNearby = await this.getNearbyUniversities(lat, lng, radiusKm);
-    if (dbNearby.length >= AiService.MIN_ZONE_COVERAGE) return dbNearby;
+
+    // Dos gates independientes: "cuántas hay" (activa descubrir nuevas en
+    // Places) y "cuántas SIRVEN" — tienen steamPrograms, o sea activan A8 y
+    // muestran ficha completa (activa enriquecer existentes). Antes había un
+    // solo gate por cantidad total: en zonas densas (CDMX) ya hay >15
+    // registros crudos desde el primer request, así que la función
+    // retornaba de inmediato y el enriquecimiento NUNCA se disparaba —
+    // aunque casi ninguno tuviera programas. Ver findOrDiscoverNearby en el
+    // plan de corrección para el detalle del bug.
+    const withPrograms = dbNearby.filter((u) => u.steamPrograms?.length).length;
+    const needsMoreCoverage = dbNearby.length < AiService.MIN_ZONE_COVERAGE;
+    const needsEnrichment = withPrograms < AiService.MIN_ZONE_COVERAGE;
+    if (!needsMoreCoverage && !needsEnrichment) return dbNearby;
 
     const apiKey = this.configService.get<string>('GOOGLE_PLACES_API_KEY');
     let budget = AiService.MAX_SYNC_ENRICH;
@@ -182,7 +195,7 @@ export class AiService {
     // que el alumno ya está viendo "vacías", y son las que activan A8.
     // Nunca-intentadas primero (aiEnrichedAt null); las ya intentadas (sitio
     // caído, etc.) solo se reintentan si sobra presupuesto.
-    if (this.groq && budget > 0) {
+    if (needsEnrichment && this.groq && budget > 0) {
       const toEnrich = dbNearby
         .filter(
           (u) =>
@@ -199,7 +212,9 @@ export class AiService {
     }
 
     // ── 2) Descubrir nuevas vía Places con el presupuesto restante ────────
-    if (apiKey && budget > 0) {
+    // Solo si de verdad hace falta MÁS cantidad — si ya hay suficientes en
+    // BD, no tiene sentido gastar cuota de Places en encontrar más.
+    if (needsMoreCoverage && apiKey && budget > 0) {
       await this.discoverNewNearby(lat, lng, radiusKm, apiKey, budget);
     }
 
@@ -256,7 +271,7 @@ export class AiService {
       if (!uni.steamPrograms?.length && Array.isArray(parsed.steamPrograms) && parsed.steamPrograms.length) {
         const validAreas = new Set(['ciencia', 'tecnologia', 'ingenieria', 'artes', 'matematicas']);
         const validPrograms = parsed.steamPrograms.filter(
-          (p: any) => p?.name && validAreas.has(p?.area),
+          (p: any) => p?.name && validAreas.has(p?.area) && !isGenericProgramName(p.name),
         );
         if (validPrograms.length) uni.steamPrograms = validPrograms;
       }
@@ -268,6 +283,9 @@ export class AiService {
       }
       if (!uni.modality && typeof parsed.modality === 'string' && parsed.modality.trim()) {
         uni.modality = parsed.modality.trim();
+      }
+      if (!uni.admissionDates && typeof parsed.admissionDates === 'string' && parsed.admissionDates.trim()) {
+        uni.admissionDates = parsed.admissionDates.trim();
       }
       uni.aiEnrichedAt = new Date();
       uni.aiEnrichmentSource = url;
@@ -491,7 +509,9 @@ SALIDA (JSON estricto, sin texto extra):
 
       const validAreas = new Set(['ciencia', 'tecnologia', 'ingenieria', 'artes', 'matematicas']);
       const steamPrograms = Array.isArray(parsed.steamPrograms)
-        ? parsed.steamPrograms.filter((p: any) => p?.name && validAreas.has(p?.area))
+        ? parsed.steamPrograms.filter(
+            (p: any) => p?.name && validAreas.has(p?.area) && !isGenericProgramName(p.name),
+          )
         : [];
 
       return {
@@ -509,6 +529,10 @@ SALIDA (JSON estricto, sin texto extra):
         modality:
           typeof parsed.modality === 'string' && parsed.modality.trim()
             ? parsed.modality.trim()
+            : undefined,
+        admissionDates:
+          typeof parsed.admissionDates === 'string' && parsed.admissionDates.trim()
+            ? parsed.admissionDates.trim()
             : undefined,
         aiEnrichedAt: new Date(),
         aiEnrichmentSource: url,
@@ -1415,15 +1439,26 @@ suposiciones — solo reporta lo que esté literalmente en el texto dado.
 REGLAS ESTRICTAS:
 1. Si un dato no aparece explícitamente en el texto, devuélvelo vacío/null.
    NO asumas, NO generalices a partir del nombre de la universidad.
-2. "steamPrograms": solo carreras/programas de las áreas Ciencia, Tecnología,
-   Ingeniería, Artes o Matemáticas que el texto mencione literalmente.
+2. "steamPrograms": solo CARRERAS INDIVIDUALES específicas (licenciatura,
+   ingeniería, técnico superior) de las áreas Ciencia, Tecnología, Ingeniería,
+   Artes o Matemáticas que el texto mencione literalmente.
    "area" debe ser una de: ciencia | tecnologia | ingenieria | artes | matematicas.
+   NUNCA reportes como "programa" el nombre de una DIVISIÓN ACADÉMICA, CENTRO
+   UNIVERSITARIO, FACULTAD o ÁREA GENERAL (ej. "Centro Universitario de
+   Ciencias de la Salud", "Humanidades", "Ciencias Biológicas y Agropecuarias",
+   "División de Ingenierías") — esos son agrupaciones administrativas, no una
+   carrera. Ejemplo correcto: "Ingeniería en Software" (SÍ es una carrera).
+   Ejemplo incorrecto: "Ciencias de la Salud" (NO es una carrera, es una
+   división — si el texto solo menciona el nombre de la división sin listar
+   las carreras específicas que contiene, omítela).
 3. "costTier": SOLO si el texto indica claramente que es pública/gratuita
    ("public"), de costo accesible ("affordable"), o privada de alto costo
    ("private-premium"). Si no es claro, null.
 4. "tuitionRange": solo si el texto menciona colegiatura/costo en cifras o
    rango explícito. Si no, null.
 5. "modality": "presencial" | "en línea" | "híbrida" SOLO si el texto lo dice.
+6. "admissionDates": fecha o periodo de examen de admisión, registro de ficha
+   o convocatoria, SOLO si el texto lo menciona explícitamente. Si no, null.
 
 UNIVERSIDAD: ${universityName}
 
@@ -1437,7 +1472,8 @@ SALIDA (JSON estricto, sin texto extra):
   "steamPrograms": [{ "name": "string", "area": "ciencia|tecnologia|ingenieria|artes|matematicas" }],
   "costTier": "public" | "affordable" | "private-premium" | null,
   "tuitionRange": "string" | null,
-  "modality": "string" | null
+  "modality": "string" | null,
+  "admissionDates": "string" | null
 }`;
   }
 
@@ -1470,16 +1506,27 @@ clinic_or_service_center | duplicated_record | permanently_closed | other
 PASO 2 — Solo si la clasificación es una institución de educación superior
 real (no oficina, clínica, preparatoria, despacho ni registro cerrado/
 duplicado), completa además:
-1. "steamPrograms": solo carreras/programas de las áreas Ciencia, Tecnología,
-   Ingeniería, Artes o Matemáticas que el texto mencione literalmente.
+1. "steamPrograms": solo CARRERAS INDIVIDUALES específicas (licenciatura,
+   ingeniería, técnico superior) de las áreas Ciencia, Tecnología, Ingeniería,
+   Artes o Matemáticas que el texto mencione literalmente.
    "area" debe ser una de: ciencia | tecnologia | ingenieria | artes | matematicas.
+   NUNCA reportes como "programa" el nombre de una DIVISIÓN ACADÉMICA, CENTRO
+   UNIVERSITARIO, FACULTAD o ÁREA GENERAL (ej. "Centro Universitario de
+   Ciencias de la Salud", "Humanidades", "Ciencias Biológicas y Agropecuarias",
+   "División de Ingenierías") — esos son agrupaciones administrativas, no una
+   carrera. Ejemplo correcto: "Ingeniería en Software" (SÍ es una carrera).
+   Ejemplo incorrecto: "Ciencias de la Salud" (NO es una carrera, es una
+   división — si el texto solo menciona el nombre de la división sin listar
+   las carreras específicas que contiene, omítela).
 2. "costTier": SOLO si el texto indica claramente que es pública/gratuita
    ("public"), de costo accesible ("affordable"), o privada de alto costo
    ("private-premium"). Si no es claro, null.
 3. "tuitionRange": solo si el texto menciona colegiatura/costo en cifras o
    rango explícito. Si no, null.
 4. "modality": "presencial" | "en línea" | "híbrida" SOLO si el texto lo dice.
-Si la clasificación NO es de educación superior, deja esos 4 campos vacíos/null.
+5. "admissionDates": fecha o periodo de examen de admisión, registro de ficha
+   o convocatoria, SOLO si el texto lo menciona explícitamente. Si no, null.
+Si la clasificación NO es de educación superior, deja esos 5 campos vacíos/null.
 
 NOMBRE DETECTADO POR GOOGLE PLACES: ${universityName}
 
@@ -1494,7 +1541,8 @@ SALIDA (JSON estricto, sin texto extra):
   "steamPrograms": [{ "name": "string", "area": "ciencia|tecnologia|ingenieria|artes|matematicas" }],
   "costTier": "public" | "affordable" | "private-premium" | null,
   "tuitionRange": "string" | null,
-  "modality": "string" | null
+  "modality": "string" | null,
+  "admissionDates": "string" | null
 }`;
   }
 
@@ -1583,7 +1631,7 @@ SALIDA (JSON estricto, sin texto extra):
         if (!uni.steamPrograms?.length && Array.isArray(parsed.steamPrograms) && parsed.steamPrograms.length) {
           const validAreas = new Set(['ciencia', 'tecnologia', 'ingenieria', 'artes', 'matematicas']);
           const validPrograms = parsed.steamPrograms.filter(
-            (p: any) => p?.name && validAreas.has(p?.area),
+            (p: any) => p?.name && validAreas.has(p?.area) && !isGenericProgramName(p.name),
           );
           if (validPrograms.length) {
             uni.steamPrograms = validPrograms;
@@ -1600,6 +1648,10 @@ SALIDA (JSON estricto, sin texto extra):
         }
         if (!uni.modality && typeof parsed.modality === 'string' && parsed.modality.trim()) {
           uni.modality = parsed.modality.trim();
+          changed = true;
+        }
+        if (!uni.admissionDates && typeof parsed.admissionDates === 'string' && parsed.admissionDates.trim()) {
+          uni.admissionDates = parsed.admissionDates.trim();
           changed = true;
         }
 
