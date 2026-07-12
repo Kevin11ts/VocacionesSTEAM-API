@@ -69,6 +69,28 @@ export class UniversitiesController {
 
   @ApiOperation({
     summary:
+      'Universidades cerca de una coordenada: BD propia + (si hay poca cobertura) descubrimiento en vivo vía Google Places validado/enriquecido con IA y guardado para siempre',
+  })
+  @ApiResponse({
+    status: 201,
+    description: 'Lista ordenada por distancia, cada una con distanceKm',
+  })
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @Post('nearby-discover')
+  async discoverNearby(
+    @Body() body: { lat: number; lng: number; radiusKm?: number },
+  ) {
+    return lastValueFrom(
+      this.aiClient.send(
+        { cmd: 'ai.nearby-discover' },
+        { lat: body.lat, lng: body.lng, radiusKm: body.radiusKm },
+      ),
+    );
+  }
+
+  @ApiOperation({
+    summary:
       'A8: matching de universidades (datos duros + IA, filtros sobre caché)',
   })
   @ApiResponse({

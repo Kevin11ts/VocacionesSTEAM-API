@@ -55,6 +55,17 @@ export class AiController {
     );
   }
 
+  @MessagePattern({ cmd: 'ai.nearby-discover' })
+  async findOrDiscoverNearby(
+    @Payload() payload: { lat: number; lng: number; radiusKm?: number },
+  ) {
+    return this.aiService.findOrDiscoverNearby(
+      payload?.lat,
+      payload?.lng,
+      payload?.radiusKm,
+    );
+  }
+
   @MessagePattern({ cmd: 'ai.create-university' })
   async createUniversity(@Payload() data: any) {
     return this.aiService.createUniversity(data);

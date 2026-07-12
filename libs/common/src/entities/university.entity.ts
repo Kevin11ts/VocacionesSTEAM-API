@@ -54,6 +54,18 @@ export class University {
   @Column({ nullable: true })
   aiEnrichmentSource: string;
 
+  /** place_id de Google Places, cuando el registro vino de ahí — evita re-descubrir/re-pedir Details del mismo lugar. */
+  @Column({ nullable: true })
+  googlePlaceId: string;
+
+  /** Origen del registro: 'manual' | 'discovery_admin' | 'denue' | 'nearby_ai_pipeline'. */
+  @Column({ type: 'varchar', nullable: true })
+  source: string;
+
+  /** Clasificación que asignó la IA (university, technological_institute, unverified, etc.) al validar un candidato nuevo. */
+  @Column({ nullable: true })
+  institutionType: string;
+
   @CreateDateColumn()
   createdAt: Date;
 

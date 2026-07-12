@@ -118,6 +118,204 @@ export class AiService {
       .slice(0, limit);
   }
 
+  /** Tope de candidatos nuevos enriquecidos con IA por request síncrono — ver findOrDiscoverNearby(). */
+  private static readonly MAX_SYNC_ENRICH = 5;
+
+  /** Clasificaciones que NO son educación superior real — se descartan (nunca se persisten). */
+  private static readonly DISCARD_TYPES = new Set([
+    'high_school',
+    'government_office',
+    'administrative_office',
+    'legal_office',
+    'clinic_or_service_center',
+    'duplicated_record',
+    'permanently_closed',
+    'other',
+  ]);
+
+  /**
+   * "Cerca de ti" (Explorar) y el mapa: BD propia como fuente principal; si
+   * la zona tiene poca cobertura (<3), busca en Google Places EN EL SERVIDOR
+   * (nunca se expone la key al cliente), valida/enriquece con IA los
+   * candidatos nuevos que no estén ya en la BD, los guarda, y a partir de
+   * ahí quedan disponibles para siempre sin volver a preguntarle a Places ni
+   * a la IA por esa misma universidad.
+   *
+   * Síncrono a propósito (decisión del producto): el usuario espera mientras
+   * se valida/enriquece. Por eso se capea a MAX_SYNC_ENRICH candidatos por
+   * request (~7-8s cada uno entre fetch del sitio + Groq, igual que
+   * enrichUniversitiesWithAi) — si Places trae más candidatos nuevos que el
+   * tope, el resto no se pierde: al no persistirse, la siguiente búsqueda en
+   * esa zona los vuelve a encontrar y procesa el siguiente lote.
+   */
+  async findOrDiscoverNearby(
+    lat: number,
+    lng: number,
+    radiusKm = 25,
+  ): Promise<(University & { distanceKm: number })[]> {
+    const dbNearby = await this.getNearbyUniversities(lat, lng, radiusKm);
+    if (dbNearby.length >= 3) return dbNearby; // ya hay cobertura: no toca Places/IA
+
+    const apiKey = this.configService.get<string>('GOOGLE_PLACES_API_KEY');
+    if (!apiKey) return dbNearby; // sin key configurada no hay plan B; se devuelve lo que haya
+
+    const radiusMeters = Math.min(radiusKm, 50) * 1000;
+    const seenPlaceIds = new Set<string>();
+    const rawCandidates: any[] = [];
+
+    for (const term of AiService.SEARCH_TERMS) {
+      let results: any[] = [];
+      try {
+        results = await this.placesNearbySearch(apiKey, lat, lng, radiusMeters, term);
+      } catch (err) {
+        this.logger.error(`Nearby discovery falló ("${term}"): ${err.message || err}`);
+        continue;
+      }
+      for (const place of results) {
+        if (
+          !place.place_id ||
+          place.business_status === 'CLOSED_PERMANENTLY' ||
+          this.isJunkName(place.name)
+        ) {
+          continue;
+        }
+        if (seenPlaceIds.has(place.place_id)) continue;
+        seenPlaceIds.add(place.place_id);
+        rawCandidates.push(place);
+      }
+    }
+    if (!rawCandidates.length) return dbNearby;
+
+    // Dedupe determinista contra TODA la BD + contra el propio lote, por
+    // ubicación física (<150m) — mismo criterio que discoverUniversities().
+    const existing = await this.universityRepository.find({ select: ['location'] });
+    const locationIndex = this.buildLocationIndex(
+      existing.map((u) => u.location).filter((l): l is { latitude: number; longitude: number } => !!l),
+    );
+
+    const newCandidates: { place: any; loc: { latitude: number; longitude: number }; distanceKm: number }[] = [];
+    for (const place of rawCandidates) {
+      const loc =
+        typeof place.geometry?.location?.lat === 'number' &&
+        typeof place.geometry?.location?.lng === 'number'
+          ? { latitude: place.geometry.location.lat, longitude: place.geometry.location.lng }
+          : undefined;
+      if (!loc) continue;
+      if (this.isNearIndexedLocation(locationIndex, loc)) continue; // ya existe en BD o ya visto en este lote
+      this.addToLocationIndex(locationIndex, loc);
+      newCandidates.push({
+        place,
+        loc,
+        distanceKm: haversineKm({ lat, lng }, { lat: loc.latitude, lng: loc.longitude }),
+      });
+    }
+    if (!newCandidates.length) return dbNearby;
+
+    // Cap por latencia: solo los N más cercanos se validan/enriquecen ahora.
+    const toEnrich = newCandidates
+      .sort((a, b) => a.distanceKm - b.distanceKm)
+      .slice(0, AiService.MAX_SYNC_ENRICH);
+
+    const newRows: Partial<University>[] = [];
+    for (const { place, loc } of toEnrich) {
+      const base: Partial<University> = {
+        name: place.name,
+        location: loc,
+        address: place.vicinity || place.formatted_address,
+        rating: place.rating,
+        googlePlaceId: place.place_id,
+        source: 'nearby_ai_pipeline',
+      };
+
+      let website: string | undefined;
+      try {
+        website = await this.fetchPlaceWebsite(apiKey, place.place_id);
+      } catch (err) {
+        this.logger.warn(`Place Details falló para "${place.name}": ${err.message || err}`);
+      }
+
+      if (!website || !this.groq) {
+        // Sin sitio (o sin Groq configurado) no hay forma de validar/enriquecer:
+        // se guarda igual, igual de honesto que el descubrimiento admin de hoy.
+        newRows.push({ ...base, institutionType: 'unverified' });
+        continue;
+      }
+
+      const url = website.startsWith('http') ? website : `http://${website}`;
+      try {
+        const siteText = await this.fetchSiteText(url);
+        const prompt = this.buildDiscoveryPrompt(place.name, siteText);
+        const raw = await this.withTimeout(
+          this.callGroqEnrich(prompt),
+          this.ENRICH_GROQ_TIMEOUT_MS,
+          'Groq (descubrimiento cerca de ti)',
+        );
+        const cleaned = raw.replace(/```json|```/g, '').trim();
+        const parsed = JSON.parse(cleaned);
+        const institutionType =
+          typeof parsed.institutionType === 'string' ? parsed.institutionType : 'unverified';
+
+        if (AiService.DISCARD_TYPES.has(institutionType)) {
+          await this.logAiDiscard(place.name, institutionType);
+          continue; // no es una institución de educación superior real: se descarta
+        }
+
+        const validAreas = new Set(['ciencia', 'tecnologia', 'ingenieria', 'artes', 'matematicas']);
+        const steamPrograms = Array.isArray(parsed.steamPrograms)
+          ? parsed.steamPrograms.filter((p: any) => p?.name && validAreas.has(p?.area))
+          : [];
+
+        newRows.push({
+          ...base,
+          website: url,
+          institutionType,
+          steamPrograms: steamPrograms.length ? steamPrograms : undefined,
+          costTier: ['public', 'affordable', 'private-premium'].includes(parsed.costTier)
+            ? parsed.costTier
+            : undefined,
+          tuitionRange:
+            typeof parsed.tuitionRange === 'string' && parsed.tuitionRange.trim()
+              ? parsed.tuitionRange.trim()
+              : undefined,
+          modality:
+            typeof parsed.modality === 'string' && parsed.modality.trim()
+              ? parsed.modality.trim()
+              : undefined,
+          aiEnrichedAt: new Date(),
+          aiEnrichmentSource: url,
+        });
+      } catch (err) {
+        this.logger.warn(`Descubrimiento con IA falló para "${place.name}": ${err.message || err}`);
+        // No se pudo confirmar con IA (sitio caído/timeout): se guarda igual
+        // como "unverified" en vez de perder el candidato para siempre.
+        newRows.push({ ...base, website: url, institutionType: 'unverified' });
+      }
+    }
+
+    if (newRows.length) {
+      await this.bulkCreateUniversities(newRows);
+    }
+
+    return this.getNearbyUniversities(lat, lng, radiusKm);
+  }
+
+  private async logAiDiscard(name: string, institutionType: string): Promise<void> {
+    try {
+      await this.aiLogRepository.save(
+        this.aiLogRepository.create({
+          studentName: name,
+          detectedProfile: `descubrimiento cerca-de-ti: descartado (${institutionType})`,
+          latency: 0,
+          success: true,
+          tokensConsumed: 0,
+          provider: 'Groq',
+        }),
+      );
+    } catch (err) {
+      this.logger.error('Error guardando log de descarte', err);
+    }
+  }
+
   async createUniversity(data: Partial<University>): Promise<University> {
     const university = this.universityRepository.create(data);
     return this.universityRepository.save(university);
@@ -593,6 +791,48 @@ export class AiService {
   }
 
   /**
+   * Google Places Nearby Search (server-side, la key nunca se expone al
+   * cliente) alrededor de una coordenada — usado por findOrDiscoverNearby()
+   * para "cerca de ti". A diferencia de placesTextSearch() (por texto libre,
+   * pensado para barridos por ciudad), este busca por `location`+`radius`,
+   * que es lo que de verdad importa para una visita real de un usuario.
+   * Una sola página (hasta 20 resultados) por término: alcanza de sobra para
+   * un radio de búsqueda normal y evita la espera de ~2s/página que sí vale
+   * la pena en los barridos masivos del admin, no aquí.
+   */
+  private async placesNearbySearch(
+    apiKey: string,
+    lat: number,
+    lng: number,
+    radiusMeters: number,
+    keyword: string,
+  ): Promise<any[]> {
+    const url = new URL('https://maps.googleapis.com/maps/api/place/nearbysearch/json');
+    url.searchParams.set('key', apiKey);
+    url.searchParams.set('location', `${lat},${lng}`);
+    url.searchParams.set('radius', String(Math.min(radiusMeters, 50000)));
+    url.searchParams.set('keyword', keyword);
+    url.searchParams.set('language', 'es');
+    const res = await fetch(url.toString());
+    const data: any = await res.json();
+    if (data.status !== 'OK' && data.status !== 'ZERO_RESULTS') {
+      this.logger.warn(`Places Nearby "${data.status}" para "${keyword}": ${data.error_message || ''}`);
+    }
+    return data.results || [];
+  }
+
+  /** Place Details (solo el campo `website`) — Nearby/Text Search no lo incluyen. */
+  private async fetchPlaceWebsite(apiKey: string, placeId: string): Promise<string | undefined> {
+    const url = new URL('https://maps.googleapis.com/maps/api/place/details/json');
+    url.searchParams.set('key', apiKey);
+    url.searchParams.set('place_id', placeId);
+    url.searchParams.set('fields', 'website');
+    const res = await fetch(url.toString());
+    const data: any = await res.json();
+    return data?.result?.website || undefined;
+  }
+
+  /**
    * Descubrimiento automático de universidades (Google Places Text Search)
    * disparado desde el botón del panel admin. Busca varios términos
    * (universidad / instituto tecnológico / centro universitario / escuela
@@ -994,6 +1234,63 @@ ${siteText}
 
 SALIDA (JSON estricto, sin texto extra):
 {
+  "steamPrograms": [{ "name": "string", "area": "ciencia|tecnologia|ingenieria|artes|matematicas" }],
+  "costTier": "public" | "affordable" | "private-premium" | null,
+  "tuitionRange": "string" | null,
+  "modality": "string" | null
+}`;
+  }
+
+  /**
+   * Variante de buildEnrichPrompt() para candidatos NUEVOS de Google Places
+   * (findOrDiscoverNearby): además de completar campos, primero le pide a la
+   * IA clasificar el tipo de institución — así se puede descartar de forma
+   * automática lo que Places etiquetó como "university" pero en realidad es
+   * una oficina/clínica/preparatoria/plantel cerrado. Mismo principio anti-
+   * alucinación: null si el texto no lo confirma explícitamente.
+   *
+   * Nota de alcance: solo puede leer el sitio oficial de la institución (no
+   * tiene acceso a RVOE/SEP ni a otros sistemas de gobierno), igual que el
+   * enriquecimiento admin existente.
+   */
+  private buildDiscoveryPrompt(universityName: string, siteText: string): string {
+    return `SISTEMA:
+Eres un asistente que valida y extrae datos EXPLÍCITOS de la página web oficial
+de una posible institución de educación superior en México. NUNCA inventes ni
+completes con conocimiento externo o suposiciones — solo reporta lo que esté
+literalmente en el texto dado. Si un dato no aparece explícitamente, null.
+
+PASO 1 — Clasifica "institutionType" con UNA de estas opciones EXACTAS:
+university | university_campus | technological_institute |
+higher_education_institute | normal_school |
+research_center_with_academic_programs | faculty_or_academic_unit |
+high_school | government_office | administrative_office | legal_office |
+clinic_or_service_center | duplicated_record | permanently_closed | other
+
+PASO 2 — Solo si la clasificación es una institución de educación superior
+real (no oficina, clínica, preparatoria, despacho ni registro cerrado/
+duplicado), completa además:
+1. "steamPrograms": solo carreras/programas de las áreas Ciencia, Tecnología,
+   Ingeniería, Artes o Matemáticas que el texto mencione literalmente.
+   "area" debe ser una de: ciencia | tecnologia | ingenieria | artes | matematicas.
+2. "costTier": SOLO si el texto indica claramente que es pública/gratuita
+   ("public"), de costo accesible ("affordable"), o privada de alto costo
+   ("private-premium"). Si no es claro, null.
+3. "tuitionRange": solo si el texto menciona colegiatura/costo en cifras o
+   rango explícito. Si no, null.
+4. "modality": "presencial" | "en línea" | "híbrida" SOLO si el texto lo dice.
+Si la clasificación NO es de educación superior, deja esos 4 campos vacíos/null.
+
+NOMBRE DETECTADO POR GOOGLE PLACES: ${universityName}
+
+TEXTO DE LA PÁGINA (puede estar incompleto o no tener toda la info):
+"""
+${siteText}
+"""
+
+SALIDA (JSON estricto, sin texto extra):
+{
+  "institutionType": "string",
   "steamPrograms": [{ "name": "string", "area": "ciencia|tecnologia|ingenieria|artes|matematicas" }],
   "costTier": "public" | "affordable" | "private-premium" | null,
   "tuitionRange": "string" | null,
