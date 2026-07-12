@@ -25,6 +25,10 @@ import {
   MAX_DISTANCE_KM,
   ValidatedAiAdjustment,
 } from './university-match.engine';
+import {
+  DISCARDED_INSTITUTION_TYPES,
+  isExcludedInstitutionName,
+} from './institution-filter';
 
 /**
  * A8 — Matching de universidades en 2 capas (arquitectura obligatoria):
@@ -47,11 +51,12 @@ const FALLBACK_CACHE_TTL_MS = 3 * 60 * 1000;
 const PROVIDER_TIMEOUT_MS = 12_000;
 
 /**
- * Máximo de candidatas que se le pasan a la IA (las top por baseScore).
- * Con el matching por eje STEAM el pool puede crecer mucho; el resto de
- * candidatas igual sale en la respuesta con su ranking determinista.
+ * Máximo de candidatas que se le pasan a la IA: la mejor coincidencia + 5
+ * sugerencias secundarias. Mantener el lote chico ahorra tokens y evita que
+ * un JSON con demasiadas universidades degrade la calidad del análisis; el
+ * resto de candidatas igual sale en la respuesta con su ranking determinista.
  */
-const MAX_AI_CANDIDATES = 25;
+const MAX_AI_CANDIDATES = 6;
 
 @Injectable()
 export class UniversityMatchService {
@@ -144,6 +149,7 @@ export class UniversityMatchService {
         // valores deterministas del match por nombre/eje.
         matchedCareer: adjustment?.matchedCareer || c.offersCareer,
         matchedProgram: adjustment?.matchedProgram || c.matchedProgram,
+        aiAnalyzed: !!adjustment,
         matchScore: Math.max(0, Math.min(100, basePref + aiDelta)),
         distanceKm: c.distanceKm,
         costTier: c.costTier,
@@ -228,6 +234,14 @@ export class UniversityMatchService {
         this.logger.warn(
           `Universidad "${u.name}" sin coordenadas: excluida de A8`,
         );
+        return false;
+      }
+      // Solo educación superior: fuera prepas/secundarias/oficinas (por
+      // nombre) y lo que la IA ya clasificó como no-universidad.
+      if (
+        isExcludedInstitutionName(u.name) ||
+        (u.institutionType && DISCARDED_INSTITUTION_TYPES.has(u.institutionType))
+      ) {
         return false;
       }
       return true;

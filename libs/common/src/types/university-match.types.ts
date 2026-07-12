@@ -61,6 +61,8 @@ export interface UniversityMatch {
    * carrera recomendada "Ingeniería en Software").
    */
   matchedProgram?: string;
+  /** true si este match fue analizado individualmente por la IA (mejor coincidencia + sugerencias secundarias); false = ranking determinista. */
+  aiAnalyzed?: boolean;
   matchScore: number;
   distanceKm: number;
   costTier: CostTier;

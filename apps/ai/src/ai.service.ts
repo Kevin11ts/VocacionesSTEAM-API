@@ -5,6 +5,10 @@ import { Repository, Not, IsNull } from 'typeorm';
 import Groq from 'groq-sdk';
 import { AiLog, University } from '@app/common';
 import { haversineKm } from './university-match.engine';
+import {
+  DISCARDED_INSTITUTION_TYPES,
+  isExcludedInstitutionName,
+} from './institution-filter';
 
 /**
  * Servicio del microservicio de IA.
@@ -104,7 +108,12 @@ export class AiService {
       .filter(
         (u) =>
           typeof u.location?.latitude === 'number' &&
-          typeof u.location?.longitude === 'number',
+          typeof u.location?.longitude === 'number' &&
+          // Solo educación superior: fuera prepas/secundarias/oficinas que
+          // se hayan colado en corridas viejas (por nombre) y lo que la IA
+          // ya clasificó como no-universidad (por institutionType).
+          !isExcludedInstitutionName(u.name) &&
+          !(u.institutionType && DISCARDED_INSTITUTION_TYPES.has(u.institutionType)),
       )
       .map((u) => ({
         ...u,
@@ -134,18 +143,6 @@ export class AiService {
    */
   private static readonly MAX_SYNC_ENRICH = 12;
   private static readonly ENRICH_CHUNK_SIZE = 4;
-
-  /** Clasificaciones que NO son educación superior real — se descartan (nunca se persisten). */
-  private static readonly DISCARD_TYPES = new Set([
-    'high_school',
-    'government_office',
-    'administrative_office',
-    'legal_office',
-    'clinic_or_service_center',
-    'duplicated_record',
-    'permanently_closed',
-    'other',
-  ]);
 
   /**
    * "Cerca de ti" (Explorar) y el mapa: BD propia como fuente principal; si
@@ -364,8 +361,80 @@ export class AiService {
       if (row) newRows.push(row);
     });
 
-    if (newRows.length) {
-      await this.bulkCreateUniversities(newRows);
+    // Los candidatos SIN website no pasaron por la validación completa (no
+    // hay sitio que leer) — antes se guardaban directo como 'unverified' y
+    // por ahí se colaban prepas/secundarias. Ahora una sola llamada barata a
+    // la IA clasifica ese lote POR NOMBRE y descarta lo que claramente no es
+    // educación superior.
+    const withSite = newRows.filter((r) => r.website);
+    const nameOnly = newRows.filter((r) => !r.website);
+    let accepted = withSite;
+    if (nameOnly.length) {
+      const rejected = await this.classifyNonUniversitiesByName(
+        nameOnly.map((r) => r.name!),
+      );
+      for (const r of nameOnly) {
+        if (rejected.has(this.normalizeName(r.name!))) {
+          await this.logAiDiscard(r.name!, 'name_classification');
+        }
+      }
+      accepted = [
+        ...withSite,
+        ...nameOnly.filter((r) => !rejected.has(this.normalizeName(r.name!))),
+      ];
+    }
+
+    if (accepted.length) {
+      await this.bulkCreateUniversities(accepted);
+    }
+  }
+
+  /**
+   * Clasificación mínima POR NOMBRE (una sola llamada para todo el lote):
+   * devuelve el conjunto de nombres (normalizados) que claramente NO son
+   * educación superior. Conservadora a propósito — en caso de duda el
+   * nombre NO se descarta (el filtro determinista de patrones ya atrapó los
+   * casos obvios; esto es la segunda red para nombres ambiguos). Si Groq no
+   * está disponible o falla, no se descarta nada.
+   */
+  private async classifyNonUniversitiesByName(
+    names: string[],
+  ): Promise<Set<string>> {
+    if (!this.groq || !names.length) return new Set();
+    const prompt = `SISTEMA:
+Recibes nombres de lugares que Google Maps devolvió al buscar universidades en
+México. Identifica cuáles claramente NO son instituciones de educación superior
+(universidades, institutos tecnológicos, escuelas normales, centros
+universitarios): por ejemplo preparatorias, secundarias, primarias, kinders,
+academias de oficios sin nivel superior, oficinas, clínicas o negocios.
+
+REGLA: si un nombre es ambiguo o podría ser educación superior, NO lo incluyas.
+Solo incluye los que sin duda no lo son.
+
+NOMBRES:
+${JSON.stringify(names, null, 2)}
+
+SALIDA (JSON estricto, sin texto extra):
+{ "notHigherEducation": ["nombre exacto tal como lo recibiste", ...] }`;
+
+    try {
+      const raw = await this.withTimeout(
+        this.callGroqEnrich(prompt),
+        this.ENRICH_GROQ_TIMEOUT_MS,
+        'Groq (clasificación por nombre)',
+      );
+      const parsed = JSON.parse(raw.replace(/```json|```/g, '').trim());
+      const list = Array.isArray(parsed?.notHigherEducation)
+        ? parsed.notHigherEducation
+        : [];
+      return new Set(
+        list
+          .filter((n: any) => typeof n === 'string')
+          .map((n: string) => this.normalizeName(n)),
+      );
+    } catch (err) {
+      this.logger.warn(`Clasificación por nombre falló: ${err.message || err}`);
+      return new Set();
     }
   }
 
@@ -415,7 +484,7 @@ export class AiService {
       const institutionType =
         typeof parsed.institutionType === 'string' ? parsed.institutionType : 'unverified';
 
-      if (AiService.DISCARD_TYPES.has(institutionType)) {
+      if (DISCARDED_INSTITUTION_TYPES.has(institutionType)) {
         await this.logAiDiscard(place.name, institutionType);
         return null; // no es una institución de educación superior real: se descarta
       }
@@ -798,36 +867,14 @@ export class AiService {
   }
 
   /**
-   * Nombres que Google Places / DENUE devuelven bajo el SCIAN de educación
-   * pero que en realidad son oficinas de gobierno, sindicatos, clínicas o
-   * servicios internos de una institución (no la institución en sí).
-   * Se usa tanto para filtrar candidatos nuevos como para limpiar lo que
-   * ya está guardado (ver cleanupJunkUniversities()).
+   * Nombres que NO deben tratarse como universidades: basura administrativa
+   * (oficinas, sindicatos, estacionamientos) Y escuelas de nivel básico/medio
+   * (preparatorias, secundarias, CONALEP, etc.). Patrones compartidos en
+   * institution-filter.ts. Se usa para filtrar candidatos nuevos en los tres
+   * descubrimientos y para limpiar lo ya guardado (cleanupJunkUniversities()).
    */
-  private static readonly JUNK_NAME_PATTERNS: RegExp[] = [
-    /^ESTACIONAMIENTO\b/i,
-    /^SINDICATO\b/i,
-    /^PRESIDENCIA MUNICIPAL\b/i,
-    /^AYUNTAMIENTO\b/i,
-    /^DELEGACION\b/i,
-    /^SECRETARIA DE EDUCACI[OÓ]N P[UÚ]BLICA$/i, // exacto: la dependencia en sí, no un nombre que solo la incluye
-    /^DESPACHO JUR[IÍ]DICO\b/i,
-    /^DIRECCI[OÓ]N (GENERAL )?DE (FOMENTO|DEPORTE)\b/i,
-    /^SITIO WEB TEMPORAL\b/i,
-    /^ALMAC[EÉ]N\b/i,
-    /^BODEGA\b/i,
-    /^CAMPO DE (BEISBOL|F[UÚ]TBOL|DEPORTES|TIRO)\b/i,
-    /^ABOGADO GENERAL\b/i,
-    /^CONSEJO ACAD[EÉ]MICO\b/i,
-    /^OFICINA ADMINISTRATIVA\b/i,
-    /^FONDO DE\b/i,
-    /SIN NOMBRE$/i, // artefacto del propio censo del INEGI, no un nombre real
-  ];
-
   private isJunkName(name: string): boolean {
-    const upper = (name || '').toUpperCase().trim();
-    if (!upper) return true;
-    return AiService.JUNK_NAME_PATTERNS.some((re) => re.test(upper));
+    return isExcludedInstitutionName(name);
   }
 
   /**
