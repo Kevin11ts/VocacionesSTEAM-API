@@ -19,7 +19,7 @@ import {
 import {
   applyFiltersAndSort,
   computeBaseScore,
-  findOfferedCareer,
+  findCareerMatch,
   haversineKm,
   validateAiMatches,
   MAX_DISTANCE_KM,
@@ -45,6 +45,13 @@ const FALLBACK_CACHE_TTL_MS = 3 * 60 * 1000;
 
 /** Máximo tiempo de espera por intento de proveedor antes de darlo por caído. */
 const PROVIDER_TIMEOUT_MS = 12_000;
+
+/**
+ * Máximo de candidatas que se le pasan a la IA (las top por baseScore).
+ * Con el matching por eje STEAM el pool puede crecer mucho; el resto de
+ * candidatas igual sale en la respuesta con su ranking determinista.
+ */
+const MAX_AI_CANDIDATES = 25;
 
 @Injectable()
 export class UniversityMatchService {
@@ -126,12 +133,17 @@ export class UniversityMatchService {
         costTier: c.costTier,
         costPreference: request.filters.costPreference,
         rating: c.rating,
+        matchType: c.matchType,
       });
       const aiDelta = adjustment ? adjustment.matchScore - c.baseScore : 0;
       return {
         universityId: c.universityId,
         name: c.name,
-        matchedCareer: c.offersCareer,
+        // La IA puede refinar a qué carrera corresponde y cuál programa real
+        // es el más afín; si no lo hizo (o no pasó validación), quedan los
+        // valores deterministas del match por nombre/eje.
+        matchedCareer: adjustment?.matchedCareer || c.offersCareer,
+        matchedProgram: adjustment?.matchedProgram || c.matchedProgram,
         matchScore: Math.max(0, Math.min(100, basePref + aiDelta)),
         distanceKm: c.distanceKm,
         costTier: c.costTier,
@@ -224,8 +236,11 @@ export class UniversityMatchService {
     const distances = await this.resolveDistances(origin, located);
 
     for (const university of located) {
-      const offersCareer = findOfferedCareer(university, careers);
-      if (!offersCareer) continue; // match duro: si no la ofrece, se excluye
+      // Matching en 2 niveles: directo (nombre) o por eje STEAM (área).
+      // Solo se excluye si no tiene programas o ninguno cae en los ejes
+      // recomendados.
+      const careerMatch = findCareerMatch(university, careers);
+      if (!careerMatch) continue;
 
       const distanceKm = distances.get(university.id);
       if (distanceKm === undefined || distanceKm > MAX_DISTANCE_KM) continue;
@@ -238,7 +253,9 @@ export class UniversityMatchService {
       candidates.push({
         universityId: university.id,
         name: university.name,
-        offersCareer,
+        offersCareer: careerMatch.careerName,
+        matchType: careerMatch.matchType,
+        matchedProgram: careerMatch.matchedProgram,
         distanceKm,
         costTier,
         tuitionRange: university.tuitionRange ?? 'información no disponible',
@@ -254,6 +271,7 @@ export class UniversityMatchService {
           costTier,
           costPreference: 'any',
           rating,
+          matchType: careerMatch.matchType,
         }),
         websiteUrl: university.website ?? undefined,
         address: university.address ?? undefined,
@@ -327,10 +345,14 @@ export class UniversityMatchService {
       affordable: 'de costo accesible',
       'private-premium': 'privada',
     };
-    return (
-      `Ofrece ${c.offersCareer}, es ${tierLabel[c.costTier] ?? c.costTier} ` +
-      `y está a ${c.distanceKm} km de ti.`
-    );
+    const tier = tierLabel[c.costTier] ?? c.costTier;
+    if (c.matchType === 'area' && c.matchedProgram) {
+      return (
+        `Ofrece ${c.matchedProgram}, un programa del área afín a tu carrera ` +
+        `recomendada (${c.offersCareer}); es ${tier} y está a ${c.distanceKm} km de ti.`
+      );
+    }
+    return `Ofrece ${c.offersCareer}, es ${tier} y está a ${c.distanceKm} km de ti.`;
   }
 
   // ==========================================================================
@@ -388,8 +410,14 @@ export class UniversityMatchService {
     adjustments: Record<string, ValidatedAiAdjustment>;
     provider: string;
   } | null> {
+    // Solo las mejores candidatas van al prompt (control de tokens); el
+    // resto sale igual en la respuesta con su ranking determinista.
+    const aiCandidates = [...candidates]
+      .sort((a, b) => b.baseScore - a.baseScore)
+      .slice(0, MAX_AI_CANDIDATES);
+
     const prompt = this.buildPrompt(
-      candidates,
+      aiCandidates,
       careers,
       dominantAxes,
       calibrationLevel,
@@ -411,7 +439,11 @@ export class UniversityMatchService {
       );
       const cleaned = text.replace(/```json|```/g, '').trim();
       const parsed = JSON.parse(cleaned);
-      const validated = validateAiMatches(parsed?.matches ?? [], candidates);
+      const validated = validateAiMatches(
+        parsed?.matches ?? [],
+        aiCandidates,
+        careers,
+      );
 
       await this.saveLog(
         userId,
@@ -506,7 +538,9 @@ export class UniversityMatchService {
       messages: [{ role: 'user', content: prompt }],
       temperature: 0.2,
       response_format: { type: 'json_object' },
-      max_tokens: 3000,
+      // La salida ahora trae matchedCareer/matchedProgram/explicación por
+      // cada una de hasta 25 candidatas: 3000 quedaba justo y truncaba el JSON.
+      max_tokens: 4000,
     });
     return {
       text: completion.choices[0]?.message?.content || '{}',
@@ -515,8 +549,11 @@ export class UniversityMatchService {
   }
 
   /**
-   * Prompt de `algoritmo-universidades-IA.md` (sección 4), usado literal:
-   * reglas estrictas + anti-sesgo + entrada JSON + salida JSON estricta.
+   * Prompt basado en `algoritmo-universidades-IA.md` (sección 4), extendido:
+   * la IA ahora también hace el juicio semántico carrera↔programa — recibe
+   * la oferta educativa completa de cada candidata y decide qué programa
+   * REAL es el más afín a las carreras recomendadas del alumno (equivalencias
+   * que el match literal no ve). Reglas anti-alucinación intactas.
    */
   private buildPrompt(
     candidates: UniversityCandidate[],
@@ -541,7 +578,14 @@ export class UniversityMatchService {
       candidateUniversities: candidates.map((c) => ({
         universityId: c.universityId,
         name: c.name,
-        offersCareer: c.offersCareer,
+        // Match determinista de partida (la IA puede refinarlo):
+        matchType: c.matchType,        // 'direct' = nombre coincide | 'area' = mismo eje STEAM
+        offersCareer: c.offersCareer,  // carrera recomendada que hizo match
+        matchedProgram: c.matchedProgram, // programa real que lo produjo
+        steamPrograms: (c.steamPrograms || []).map((p) => ({
+          name: p.name,
+          area: p.area,
+        })),
         distanceKm: c.distanceKm,
         costTier: c.costTier,
         tuitionRange: c.tuitionRange,
@@ -552,41 +596,55 @@ export class UniversityMatchService {
     };
 
     return `SISTEMA:
-Eres un orientador vocacional imparcial para estudiantes de México. Tu única tarea
-es RANKEAR y EXPLICAR universidades de una lista que se te entrega. Trabajas para un
-estudiante real que necesita una decisión justa y honesta.
+Eres un orientador vocacional imparcial para estudiantes de México. Tu tarea es
+RANKEAR y EXPLICAR universidades de una lista que se te entrega, identificando
+para cada una el programa académico REAL más afín al perfil del estudiante.
+Trabajas para un estudiante real que necesita una decisión justa y honesta.
 
 REGLAS ESTRICTAS:
 1. SOLO puedes usar universidades de la lista proporcionada. NUNCA inventes
    universidades, carreras, colegiaturas, fechas ni datos que no estén en la lista.
-2. Si te falta un dato, dilo explícitamente ("información no disponible"); no lo supongas.
-3. El % de match que devuelvas debe partir del "baseScore" dado. Puedes ajustarlo
-   como máximo ±10 puntos, y debes justificar el ajuste con datos de la lista.
-4. Basa tu razonamiento ÚNICAMENTE en: ajuste del programa a la carrera recomendada,
-   distancia, costo, modalidad y rating. NADA más.
+2. "matchedProgram" debe ser EXACTAMENTE uno de los nombres en "steamPrograms" de
+   esa universidad (cópialo literal, sin reescribirlo). "matchedCareer" debe ser
+   EXACTAMENTE una de las "recommendedCareers". Elige el par programa↔carrera con
+   mayor afinidad semántica: reconoce equivalencias reales aunque el nombre no
+   coincida (ej. "Ingeniería en Sistemas Computacionales" es afín a "Ingeniería en
+   Software"; "Licenciatura en Medicina" a "Médico Cirujano"). Si ningún programa
+   es afín de verdad a ninguna carrera recomendada, conserva los valores de
+   "offersCareer"/"matchedProgram" que vienen en la entrada.
+3. Si te falta un dato, dilo explícitamente ("información no disponible"); no lo supongas.
+4. El % de match que devuelvas debe partir del "baseScore" dado. Puedes ajustarlo
+   como máximo ±15 puntos, y debes justificar el ajuste con datos de la lista.
+   Sube más cuando el programa es una equivalencia semántica fuerte de la carrera
+   recomendada; baja cuando la afinidad es solo del área general.
+5. "explanation": 1-3 frases personalizadas dirigidas al estudiante, citando su
+   perfil dominante (${dominantAxes.join(' + ') || 'STEAM'}), el programa concreto
+   y datos duros de la lista (distancia, costo, modalidad, rating). NADA más.
 
 ANTI-SESGO (obligatorio):
-5. NO favorezcas universidades por prestigio, fama o por ser privadas/caras.
+6. NO favorezcas universidades por prestigio, fama o por ser privadas/caras.
    Una universidad pública o económica que ofrece el mismo programa cerca del
    estudiante es IGUAL o MÁS valiosa.
-6. Presenta un balance: no devuelvas solo opciones caras. Si hay opciones
+7. Presenta un balance: no devuelvas solo opciones caras. Si hay opciones
    públicas/accesibles válidas, deben aparecer arriba cuando los datos lo respalden.
-7. No asumas el género, nivel socioeconómico, etnia ni capacidades del estudiante.
-8. No uses estereotipos de carrera ("esto es para hombres/mujeres", etc.).
-9. Si dos universidades empatan en datos, prioriza la más accesible
-   económicamente y la más cercana.
+8. No asumas el género, nivel socioeconómico, etnia ni capacidades del estudiante.
+9. No uses estereotipos de carrera ("esto es para hombres/mujeres", etc.).
+10. Si dos universidades empatan en datos, prioriza la más accesible
+    económicamente y la más cercana.
 
 ENTRADA (JSON):
 ${JSON.stringify(entrada, null, 2)}
 
-SALIDA (JSON estricto, sin texto extra):
+SALIDA (JSON estricto, sin texto extra) — incluye TODAS las universidades de la lista:
 {
   "matches": [
     {
       "universityId": "uuid",
+      "matchedCareer": "Ingeniería en Software",
+      "matchedProgram": "Ingeniería en Sistemas Computacionales",
       "matchScore": 88,
-      "explanation": "Ofrece exactamente Ingeniería en Software, es pública y está a 12 km de ti. Su rating de 4.5 y modalidad presencial encajan con tu preferencia de opción accesible.",
-      "scoreAdjustmentReason": "+4 por coincidencia con preferencia económica y cercanía"
+      "explanation": "Con tu perfil dominante en tecnología, su Ingeniería en Sistemas Computacionales cubre lo mismo que la carrera que te recomendamos. Es pública, está a 12 km de ti y su rating es 4.5.",
+      "scoreAdjustmentReason": "+8: equivalencia semántica fuerte con la carrera recomendada"
     }
   ]
 }

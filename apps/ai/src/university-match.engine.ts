@@ -12,15 +12,20 @@ import {
  * ============================================================================
  *
  * La IA nunca decide si un programa existe, ni la distancia, ni el costo:
- * eso se calcula aquí con datos de BD. La IA solo ajusta el baseScore
- * (±10 máx) y redacta la explicación.
+ * eso se calcula aquí con datos de BD. La IA refina el ranking (±15 máx),
+ * identifica el programa real más afín a la carrera recomendada y redacta
+ * la explicación personalizada.
  */
 
 /** Radio máximo de búsqueda de candidatas (km). Los filtros acotan después. */
 export const MAX_DISTANCE_KM = 100;
 
-/** Ajuste máximo que la IA puede aplicar sobre el baseScore. */
-export const MAX_AI_ADJUSTMENT = 10;
+/**
+ * Ajuste máximo que la IA puede aplicar sobre el baseScore. Subió de 10 a 15
+ * cuando la IA pasó de solo "explicar" a hacer juicio semántico real (decidir
+ * qué programa de la universidad es el más afín a la carrera recomendada).
+ */
+export const MAX_AI_ADJUSTMENT = 15;
 
 const TIER_ACCESSIBILITY_ORDER: Record<CostTier, number> = {
   public: 0,
@@ -36,28 +41,78 @@ function normalizeText(value: string): string {
     .trim();
 }
 
+/** Nivel del match determinista carrera↔programa (ver findCareerMatch). */
+export type CareerMatchType = 'direct' | 'area';
+
+export interface CareerMatch {
+  /** Carrera recomendada de A7 a la que corresponde el match. */
+  careerName: string;
+  matchType: CareerMatchType;
+  /** Programa REAL de la universidad que produjo el match (nombre tal cual está en BD). */
+  matchedProgram: string;
+}
+
 /**
- * Match DURO: ¿la universidad ofrece alguna de las carreras recomendadas?
- * Compara nombres normalizados (igualdad o contención en cualquier
- * dirección). Devuelve la primera carrera de A7 (mayor afinidad) que la
- * universidad ofrece, o null si no ofrece ninguna → se EXCLUYE.
+ * Matching determinista en 2 niveles:
+ *
+ *   1. DIRECTO: el nombre de algún programa coincide con una carrera
+ *      recomendada (igualdad o contención normalizada, en cualquier
+ *      dirección). Es el match más fuerte → base 50.
+ *
+ *   2. POR ÁREA: ningún nombre coincide literalmente, pero la universidad
+ *      ofrece programas del mismo eje STEAM (`steamPrograms[].area`) que
+ *      alguna carrera recomendada (`axis`) → base 35. Cubre equivalencias
+ *      que el substring no ve ("Ing. en Sistemas Computacionales" para un
+ *      perfil de "Ingeniería en Software"); la IA refina después cuál
+ *      programa del área es el más afín semánticamente.
+ *
+ * Devuelve null solo si la universidad no tiene programas o ninguno cae en
+ * los ejes recomendados → se EXCLUYE.
  */
-export function findOfferedCareer(
+export function findCareerMatch(
   university: Pick<University, 'steamPrograms'>,
-  recommendedCareers: Array<{ careerName: string }>,
-): string | null {
+  recommendedCareers: Array<{ careerName: string; axis: string }>,
+): CareerMatch | null {
   const programs = (university.steamPrograms || [])
-    .map((p) => normalizeText(p?.name))
-    .filter(Boolean);
+    .filter((p) => p?.name)
+    .map((p) => ({
+      name: p.name,
+      normName: normalizeText(p.name),
+      area: normalizeText(p.area || ''),
+    }));
   if (!programs.length) return null;
 
+  // Nivel 1 — directo (se respeta el orden de A7: mayor afinidad primero)
   for (const career of recommendedCareers) {
     const wanted = normalizeText(career.careerName);
     if (!wanted) continue;
-    const offered = programs.some(
-      (p) => p === wanted || p.includes(wanted) || wanted.includes(p),
+    const program = programs.find(
+      (p) =>
+        p.normName === wanted ||
+        p.normName.includes(wanted) ||
+        wanted.includes(p.normName),
     );
-    if (offered) return career.careerName;
+    if (program) {
+      return {
+        careerName: career.careerName,
+        matchType: 'direct',
+        matchedProgram: program.name,
+      };
+    }
+  }
+
+  // Nivel 2 — por eje STEAM
+  for (const career of recommendedCareers) {
+    const axis = normalizeText(career.axis || '');
+    if (!axis) continue;
+    const program = programs.find((p) => p.area === axis);
+    if (program) {
+      return {
+        careerName: career.careerName,
+        matchType: 'area',
+        matchedProgram: program.name,
+      };
+    }
   }
   return null;
 }
@@ -97,7 +152,7 @@ export function costBonus(
 
 /**
  * baseScore (0-100) de la sección 3 del documento de A8:
- *   50 (ofrece la carrera; si no, ya fue excluida)
+ *   50 si el match es directo / 35 si es por eje STEAM (área)
  *   + (1 - distanceKm/maxDistanceKm) * 25   ← cercanía, hasta +25
  *   + bono de costo                          ← hasta +15
  *   + (rating/5) * 10                        ← calidad, hasta +10
@@ -108,12 +163,14 @@ export function computeBaseScore(params: {
   costPreference: CostPreference;
   rating?: number | null;
   maxDistanceKm?: number;
+  matchType?: CareerMatchType;
 }): number {
   const maxKm = params.maxDistanceKm ?? MAX_DISTANCE_KM;
+  const base = params.matchType === 'area' ? 35 : 50;
   const proximity = (1 - params.distanceKm / maxKm) * 25;
   const cost = costBonus(params.costTier, params.costPreference);
   const quality = ((params.rating ?? 0) / 5) * 10;
-  const score = 50 + proximity + cost + quality;
+  const score = base + proximity + cost + quality;
   return Math.max(0, Math.min(100, Math.round(score)));
 }
 
@@ -122,24 +179,38 @@ export interface RawAiMatch {
   matchScore?: number;
   explanation?: string;
   scoreAdjustmentReason?: string;
+  /** Programa REAL de la universidad que la IA identificó como el más afín. */
+  matchedProgram?: string;
+  /** Carrera recomendada de A7 a la que ese programa corresponde. */
+  matchedCareer?: string;
 }
 
 export interface ValidatedAiAdjustment {
   matchScore: number;
   explanation: string;
   scoreAdjustmentReason?: string;
+  matchedProgram?: string;
+  matchedCareer?: string;
 }
 
 /**
  * Valida la salida de la IA contra la lista candidata:
  * - Universidades fuera de la lista se DESCARTAN (anti-alucinación).
- * - El matchScore se acota a baseScore ± 10 y a 0-100.
+ * - El matchScore se acota a baseScore ± MAX_AI_ADJUSTMENT y a 0-100.
+ * - matchedProgram solo se acepta si existe LITERALMENTE entre los
+ *   steamPrograms de esa candidata; matchedCareer solo si es una de las
+ *   carreras recomendadas de A7. Si no pasan, se ignoran y el ensamble
+ *   usa los valores deterministas.
  */
 export function validateAiMatches(
   raw: RawAiMatch[],
   candidates: UniversityCandidate[],
+  recommendedCareers: Array<{ careerName: string }> = [],
 ): Record<string, ValidatedAiAdjustment> {
   const byId = new Map(candidates.map((c) => [c.universityId, c]));
+  const validCareers = new Set(
+    recommendedCareers.map((c) => normalizeText(c.careerName)).filter(Boolean),
+  );
   const validated: Record<string, ValidatedAiAdjustment> = {};
   for (const match of raw || []) {
     if (!match?.universityId) continue;
@@ -153,10 +224,29 @@ export function validateAiMatches(
       candidate.baseScore - MAX_AI_ADJUSTMENT,
       Math.min(candidate.baseScore + MAX_AI_ADJUSTMENT, Math.round(proposed)),
     );
+
+    const programNames = new Set(
+      (candidate.steamPrograms || [])
+        .map((p) => normalizeText(p?.name))
+        .filter(Boolean),
+    );
+    const matchedProgram =
+      typeof match.matchedProgram === 'string' &&
+      programNames.has(normalizeText(match.matchedProgram))
+        ? match.matchedProgram
+        : undefined;
+    const matchedCareer =
+      typeof match.matchedCareer === 'string' &&
+      validCareers.has(normalizeText(match.matchedCareer))
+        ? match.matchedCareer
+        : undefined;
+
     validated[candidate.universityId] = {
       matchScore: Math.max(0, Math.min(100, clamped)),
       explanation: match.explanation || '',
       scoreAdjustmentReason: match.scoreAdjustmentReason,
+      matchedProgram,
+      matchedCareer,
     };
   }
   return validated;

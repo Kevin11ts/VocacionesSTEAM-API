@@ -94,7 +94,7 @@ export class AiService {
     lat: number,
     lng: number,
     radiusKm = 25,
-    limit = 30,
+    limit = 40,
   ): Promise<(University & { distanceKm: number })[]> {
     if (typeof lat !== 'number' || typeof lng !== 'number' || Number.isNaN(lat) || Number.isNaN(lng)) {
       throw new Error('lat y lng son obligatorios');
@@ -118,8 +118,22 @@ export class AiService {
       .slice(0, limit);
   }
 
-  /** Tope de candidatos nuevos enriquecidos con IA por request síncrono — ver findOrDiscoverNearby(). */
-  private static readonly MAX_SYNC_ENRICH = 5;
+  /**
+   * Cobertura mínima de zona: con menos de esto en BD se activa el pipeline
+   * de descubrimiento/enriquecimiento para que el alumno vea una lista útil
+   * (15-20 universidades), no 3 tarjetas sueltas.
+   */
+  private static readonly MIN_ZONE_COVERAGE = 15;
+
+  /**
+   * Presupuesto de trabajos con IA por request síncrono (existentes a
+   * enriquecer + nuevos a validar). Se procesan en chunks paralelos de
+   * ENRICH_CHUNK_SIZE: 12 trabajos ≈ 3 oleadas × ~10-15s ≈ 30-45s en el
+   * peor caso — dentro del timeout del proxy de Railway, y respetando el
+   * rate limit de Groq (no 12 llamadas simultáneas).
+   */
+  private static readonly MAX_SYNC_ENRICH = 12;
+  private static readonly ENRICH_CHUNK_SIZE = 4;
 
   /** Clasificaciones que NO son educación superior real — se descartan (nunca se persisten). */
   private static readonly DISCARD_TYPES = new Set([
@@ -135,18 +149,25 @@ export class AiService {
 
   /**
    * "Cerca de ti" (Explorar) y el mapa: BD propia como fuente principal; si
-   * la zona tiene poca cobertura (<3), busca en Google Places EN EL SERVIDOR
-   * (nunca se expone la key al cliente), valida/enriquece con IA los
-   * candidatos nuevos que no estén ya en la BD, los guarda, y a partir de
-   * ahí quedan disponibles para siempre sin volver a preguntarle a Places ni
-   * a la IA por esa misma universidad.
+   * la zona tiene poca cobertura (<MIN_ZONE_COVERAGE), el pipeline hace DOS
+   * cosas con un presupuesto compartido de MAX_SYNC_ENRICH trabajos de IA:
    *
-   * Síncrono a propósito (decisión del producto): el usuario espera mientras
-   * se valida/enriquece. Por eso se capea a MAX_SYNC_ENRICH candidatos por
-   * request (~7-8s cada uno entre fetch del sitio + Groq, igual que
-   * enrichUniversitiesWithAi) — si Places trae más candidatos nuevos que el
-   * tope, el resto no se pierde: al no persistirse, la siguiente búsqueda en
-   * esa zona los vuelve a encontrar y procesa el siguiente lote.
+   *   1. ENRIQUECE universidades EXISTENTES de la zona sin steamPrograms
+   *      (con website directo, o consiguiéndolo vía Place Details si tienen
+   *      googlePlaceId) — son las tarjetas que hoy se ven "vacías" y además
+   *      son las que activan el matching de A8.
+   *   2. DESCUBRE universidades nuevas vía Google Places EN EL SERVIDOR
+   *      (la key nunca se expone al cliente), las valida/clasifica con IA
+   *      (descartando lo que no es educación superior) y las guarda.
+   *
+   * Todo queda persistido: la siguiente visita a la zona responde al
+   * instante sin volver a preguntarle a Places ni a la IA por lo mismo.
+   *
+   * Síncrono a propósito (decisión del producto): el usuario espera. Los
+   * trabajos corren en chunks paralelos de ENRICH_CHUNK_SIZE para caber en
+   * el timeout del proxy sin martillar el rate limit de Groq. Lo que no
+   * quepa en el presupuesto no se pierde: la próxima búsqueda en la zona
+   * procesa el siguiente lote.
    */
   async findOrDiscoverNearby(
     lat: number,
@@ -154,11 +175,132 @@ export class AiService {
     radiusKm = 25,
   ): Promise<(University & { distanceKm: number })[]> {
     const dbNearby = await this.getNearbyUniversities(lat, lng, radiusKm);
-    if (dbNearby.length >= 3) return dbNearby; // ya hay cobertura: no toca Places/IA
+    if (dbNearby.length >= AiService.MIN_ZONE_COVERAGE) return dbNearby;
 
     const apiKey = this.configService.get<string>('GOOGLE_PLACES_API_KEY');
-    if (!apiKey) return dbNearby; // sin key configurada no hay plan B; se devuelve lo que haya
+    let budget = AiService.MAX_SYNC_ENRICH;
 
+    // ── 1) Existentes de la zona sin programas: enriquecerlas primero ─────
+    // Son las más baratas (sin Place Details si ya tienen website), son las
+    // que el alumno ya está viendo "vacías", y son las que activan A8.
+    // Nunca-intentadas primero (aiEnrichedAt null); las ya intentadas (sitio
+    // caído, etc.) solo se reintentan si sobra presupuesto.
+    if (this.groq && budget > 0) {
+      const toEnrich = dbNearby
+        .filter(
+          (u) =>
+            !u.steamPrograms?.length &&
+            (u.website?.trim() || (u.googlePlaceId && apiKey)),
+        )
+        .sort((a, b) => (a.aiEnrichedAt ? 1 : 0) - (b.aiEnrichedAt ? 1 : 0))
+        .slice(0, budget);
+      budget -= toEnrich.length;
+
+      await this.runInChunks(toEnrich, AiService.ENRICH_CHUNK_SIZE, (u) =>
+        this.enrichExistingUniversity(u, apiKey),
+      );
+    }
+
+    // ── 2) Descubrir nuevas vía Places con el presupuesto restante ────────
+    if (apiKey && budget > 0) {
+      await this.discoverNewNearby(lat, lng, radiusKm, apiKey, budget);
+    }
+
+    return this.getNearbyUniversities(lat, lng, radiusKm);
+  }
+
+  /** Corre `worker` sobre `items` en tandas paralelas de tamaño `size` (los errores ya los maneja cada worker). */
+  private async runInChunks<T>(
+    items: T[],
+    size: number,
+    worker: (item: T) => Promise<unknown>,
+  ): Promise<void> {
+    for (let i = 0; i < items.length; i += size) {
+      await Promise.allSettled(items.slice(i, i + size).map(worker));
+    }
+  }
+
+  /**
+   * Enriquece UNA universidad existente sin programas: resuelve su website
+   * (directo o vía Place Details con su googlePlaceId), lee el sitio real y
+   * completa huecos con Groq — misma lógica y mismo prompt anti-alucinación
+   * que el botón admin (enrichUniversitiesWithAi), aplicada a demanda a la
+   * zona que el alumno está viendo. Registra aiEnrichedAt también en fallo
+   * para no reintentar el mismo sitio muerto en cada visita.
+   */
+  private async enrichExistingUniversity(
+    uni: University,
+    apiKey?: string,
+  ): Promise<void> {
+    try {
+      let website: string | undefined = uni.website?.trim() || undefined;
+      if (!website && uni.googlePlaceId && apiKey) {
+        website = await this.fetchPlaceWebsite(apiKey, uni.googlePlaceId);
+        if (website) uni.website = website;
+      }
+      if (!website) {
+        // Sin sitio no hay de dónde extraer: se marca el intento y ya.
+        uni.aiEnrichedAt = new Date();
+        await this.universityRepository.save(uni);
+        return;
+      }
+
+      const url = website.startsWith('http') ? website : `http://${website}`;
+      const siteText = await this.fetchSiteText(url);
+      const prompt = this.buildEnrichPrompt(uni.name, siteText);
+      const raw = await this.withTimeout(
+        this.callGroqEnrich(prompt),
+        this.ENRICH_GROQ_TIMEOUT_MS,
+        'Groq (enriquecimiento de zona)',
+      );
+      const cleaned = raw.replace(/```json|```/g, '').trim();
+      const parsed = JSON.parse(cleaned);
+
+      if (!uni.steamPrograms?.length && Array.isArray(parsed.steamPrograms) && parsed.steamPrograms.length) {
+        const validAreas = new Set(['ciencia', 'tecnologia', 'ingenieria', 'artes', 'matematicas']);
+        const validPrograms = parsed.steamPrograms.filter(
+          (p: any) => p?.name && validAreas.has(p?.area),
+        );
+        if (validPrograms.length) uni.steamPrograms = validPrograms;
+      }
+      if (!uni.costTier && ['public', 'affordable', 'private-premium'].includes(parsed.costTier)) {
+        uni.costTier = parsed.costTier;
+      }
+      if (!uni.tuitionRange && typeof parsed.tuitionRange === 'string' && parsed.tuitionRange.trim()) {
+        uni.tuitionRange = parsed.tuitionRange.trim();
+      }
+      if (!uni.modality && typeof parsed.modality === 'string' && parsed.modality.trim()) {
+        uni.modality = parsed.modality.trim();
+      }
+      uni.aiEnrichedAt = new Date();
+      uni.aiEnrichmentSource = url;
+      await this.universityRepository.save(uni);
+    } catch (err) {
+      this.logger.warn(
+        `Enriquecimiento de zona falló para "${uni.name}": ${err.message || err}`,
+      );
+      try {
+        uni.aiEnrichedAt = new Date();
+        await this.universityRepository.save(uni);
+      } catch {
+        /* si ni el intento se puede registrar, nada que hacer */
+      }
+    }
+  }
+
+  /**
+   * Descubre y valida universidades NUEVAS alrededor de una coordenada
+   * (parte 2 de findOrDiscoverNearby): Places Nearby Search + dedupe
+   * determinista por ubicación + clasificación/extracción con IA de los
+   * `budget` candidatos más cercanos, en chunks paralelos.
+   */
+  private async discoverNewNearby(
+    lat: number,
+    lng: number,
+    radiusKm: number,
+    apiKey: string,
+    budget: number,
+  ): Promise<void> {
     const radiusMeters = Math.min(radiusKm, 50) * 1000;
     const seenPlaceIds = new Set<string>();
     const rawCandidates: any[] = [];
@@ -184,7 +326,7 @@ export class AiService {
         rawCandidates.push(place);
       }
     }
-    if (!rawCandidates.length) return dbNearby;
+    if (!rawCandidates.length) return;
 
     // Dedupe determinista contra TODA la BD + contra el propio lote, por
     // ubicación física (<150m) — mismo criterio que discoverUniversities().
@@ -209,94 +351,105 @@ export class AiService {
         distanceKm: haversineKm({ lat, lng }, { lat: loc.latitude, lng: loc.longitude }),
       });
     }
-    if (!newCandidates.length) return dbNearby;
+    if (!newCandidates.length) return;
 
-    // Cap por latencia: solo los N más cercanos se validan/enriquecen ahora.
-    const toEnrich = newCandidates
+    // Presupuesto: solo los más cercanos se validan/enriquecen en esta visita.
+    const toProcess = newCandidates
       .sort((a, b) => a.distanceKm - b.distanceKm)
-      .slice(0, AiService.MAX_SYNC_ENRICH);
+      .slice(0, budget);
 
     const newRows: Partial<University>[] = [];
-    for (const { place, loc } of toEnrich) {
-      const base: Partial<University> = {
-        name: place.name,
-        location: loc,
-        address: place.vicinity || place.formatted_address,
-        rating: place.rating,
-        googlePlaceId: place.place_id,
-        source: 'nearby_ai_pipeline',
-      };
-
-      let website: string | undefined;
-      try {
-        website = await this.fetchPlaceWebsite(apiKey, place.place_id);
-      } catch (err) {
-        this.logger.warn(`Place Details falló para "${place.name}": ${err.message || err}`);
-      }
-
-      if (!website || !this.groq) {
-        // Sin sitio (o sin Groq configurado) no hay forma de validar/enriquecer:
-        // se guarda igual, igual de honesto que el descubrimiento admin de hoy.
-        newRows.push({ ...base, institutionType: 'unverified' });
-        continue;
-      }
-
-      const url = website.startsWith('http') ? website : `http://${website}`;
-      try {
-        const siteText = await this.fetchSiteText(url);
-        const prompt = this.buildDiscoveryPrompt(place.name, siteText);
-        const raw = await this.withTimeout(
-          this.callGroqEnrich(prompt),
-          this.ENRICH_GROQ_TIMEOUT_MS,
-          'Groq (descubrimiento cerca de ti)',
-        );
-        const cleaned = raw.replace(/```json|```/g, '').trim();
-        const parsed = JSON.parse(cleaned);
-        const institutionType =
-          typeof parsed.institutionType === 'string' ? parsed.institutionType : 'unverified';
-
-        if (AiService.DISCARD_TYPES.has(institutionType)) {
-          await this.logAiDiscard(place.name, institutionType);
-          continue; // no es una institución de educación superior real: se descarta
-        }
-
-        const validAreas = new Set(['ciencia', 'tecnologia', 'ingenieria', 'artes', 'matematicas']);
-        const steamPrograms = Array.isArray(parsed.steamPrograms)
-          ? parsed.steamPrograms.filter((p: any) => p?.name && validAreas.has(p?.area))
-          : [];
-
-        newRows.push({
-          ...base,
-          website: url,
-          institutionType,
-          steamPrograms: steamPrograms.length ? steamPrograms : undefined,
-          costTier: ['public', 'affordable', 'private-premium'].includes(parsed.costTier)
-            ? parsed.costTier
-            : undefined,
-          tuitionRange:
-            typeof parsed.tuitionRange === 'string' && parsed.tuitionRange.trim()
-              ? parsed.tuitionRange.trim()
-              : undefined,
-          modality:
-            typeof parsed.modality === 'string' && parsed.modality.trim()
-              ? parsed.modality.trim()
-              : undefined,
-          aiEnrichedAt: new Date(),
-          aiEnrichmentSource: url,
-        });
-      } catch (err) {
-        this.logger.warn(`Descubrimiento con IA falló para "${place.name}": ${err.message || err}`);
-        // No se pudo confirmar con IA (sitio caído/timeout): se guarda igual
-        // como "unverified" en vez de perder el candidato para siempre.
-        newRows.push({ ...base, website: url, institutionType: 'unverified' });
-      }
-    }
+    await this.runInChunks(toProcess, AiService.ENRICH_CHUNK_SIZE, async ({ place, loc }) => {
+      const row = await this.validateNewCandidate(place, loc, apiKey);
+      if (row) newRows.push(row);
+    });
 
     if (newRows.length) {
       await this.bulkCreateUniversities(newRows);
     }
+  }
 
-    return this.getNearbyUniversities(lat, lng, radiusKm);
+  /**
+   * Valida/clasifica UN candidato nuevo de Places con IA. Devuelve la fila
+   * lista para persistir, o null si la IA lo clasificó como algo que no es
+   * educación superior (se registra el descarte en ai_logs).
+   */
+  private async validateNewCandidate(
+    place: any,
+    loc: { latitude: number; longitude: number },
+    apiKey: string,
+  ): Promise<Partial<University> | null> {
+    const base: Partial<University> = {
+      name: place.name,
+      location: loc,
+      address: place.vicinity || place.formatted_address,
+      rating: place.rating,
+      googlePlaceId: place.place_id,
+      source: 'nearby_ai_pipeline',
+    };
+
+    let website: string | undefined;
+    try {
+      website = await this.fetchPlaceWebsite(apiKey, place.place_id);
+    } catch (err) {
+      this.logger.warn(`Place Details falló para "${place.name}": ${err.message || err}`);
+    }
+
+    if (!website || !this.groq) {
+      // Sin sitio (o sin Groq configurado) no hay forma de validar/enriquecer:
+      // se guarda igual, igual de honesto que el descubrimiento admin de hoy.
+      return { ...base, institutionType: 'unverified' };
+    }
+
+    const url = website.startsWith('http') ? website : `http://${website}`;
+    try {
+      const siteText = await this.fetchSiteText(url);
+      const prompt = this.buildDiscoveryPrompt(place.name, siteText);
+      const raw = await this.withTimeout(
+        this.callGroqEnrich(prompt),
+        this.ENRICH_GROQ_TIMEOUT_MS,
+        'Groq (descubrimiento cerca de ti)',
+      );
+      const cleaned = raw.replace(/```json|```/g, '').trim();
+      const parsed = JSON.parse(cleaned);
+      const institutionType =
+        typeof parsed.institutionType === 'string' ? parsed.institutionType : 'unverified';
+
+      if (AiService.DISCARD_TYPES.has(institutionType)) {
+        await this.logAiDiscard(place.name, institutionType);
+        return null; // no es una institución de educación superior real: se descarta
+      }
+
+      const validAreas = new Set(['ciencia', 'tecnologia', 'ingenieria', 'artes', 'matematicas']);
+      const steamPrograms = Array.isArray(parsed.steamPrograms)
+        ? parsed.steamPrograms.filter((p: any) => p?.name && validAreas.has(p?.area))
+        : [];
+
+      return {
+        ...base,
+        website: url,
+        institutionType,
+        steamPrograms: steamPrograms.length ? steamPrograms : undefined,
+        costTier: ['public', 'affordable', 'private-premium'].includes(parsed.costTier)
+          ? parsed.costTier
+          : undefined,
+        tuitionRange:
+          typeof parsed.tuitionRange === 'string' && parsed.tuitionRange.trim()
+            ? parsed.tuitionRange.trim()
+            : undefined,
+        modality:
+          typeof parsed.modality === 'string' && parsed.modality.trim()
+            ? parsed.modality.trim()
+            : undefined,
+        aiEnrichedAt: new Date(),
+        aiEnrichmentSource: url,
+      };
+    } catch (err) {
+      this.logger.warn(`Descubrimiento con IA falló para "${place.name}": ${err.message || err}`);
+      // No se pudo confirmar con IA (sitio caído/timeout): se guarda igual
+      // como "unverified" en vez de perder el candidato para siempre.
+      return { ...base, website: url, institutionType: 'unverified' };
+    }
   }
 
   private async logAiDiscard(name: string, institutionType: string): Promise<void> {

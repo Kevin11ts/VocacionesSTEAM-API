@@ -33,6 +33,10 @@ export interface UniversityCandidate {
   universityId: string;
   name: string;
   offersCareer: string;
+  /** 'direct' = el nombre del programa coincide con la carrera; 'area' = mismo eje STEAM. */
+  matchType?: 'direct' | 'area';
+  /** Programa real de la universidad que produjo el match determinista. */
+  matchedProgram?: string;
   distanceKm: number;
   costTier: CostTier;
   tuitionRange?: string;
@@ -51,6 +55,12 @@ export interface UniversityMatch {
   universityId: string;
   name: string;
   matchedCareer: string;
+  /**
+   * Programa REAL de la universidad más afín a matchedCareer (puede diferir
+   * del nombre del catálogo: "Ing. en Sistemas Computacionales" para una
+   * carrera recomendada "Ingeniería en Software").
+   */
+  matchedProgram?: string;
   matchScore: number;
   distanceKm: number;
   costTier: CostTier;
