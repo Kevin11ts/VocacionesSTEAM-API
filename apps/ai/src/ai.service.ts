@@ -1379,7 +1379,18 @@ SALIDA (JSON estricto, sin texto extra):
     try {
       const res = await fetch(url, {
         signal: controller.signal,
-        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; VocacionesSTEAMBot/1.0)' },
+        // Un User-Agent que se auto-declara "bot" hace que varios WAFs de
+        // universidades (Cloudflare, Sucuri, etc.) bloqueen o desafíen la
+        // petición sin siquiera responder — en la práctica eso dejaba sin
+        // poder leerse una buena parte de los sitios reales. Se cambia a un
+        // navegador estándar (mismo tipo de acceso que haría cualquier
+        // visitante o el propio Googlebot al indexar la página pública).
+        headers: {
+          'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+          Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          'Accept-Language': 'es-MX,es;q=0.9',
+        },
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const html = await res.text();
