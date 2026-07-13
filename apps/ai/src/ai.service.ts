@@ -195,13 +195,18 @@ export class AiService {
     // que el alumno ya está viendo "vacías", y son las que activan A8.
     // Nunca-intentadas primero (aiEnrichedAt null); las ya intentadas (sitio
     // caído, etc.) solo se reintentan si sobra presupuesto.
+    //
+    // OJO: no se exige tener ya `website` o `googlePlaceId` — la inmensa
+    // mayoría de la BD viene de descubrimientos viejos (botón admin de
+    // Places, DENUE) que NUNCA guardaron ninguno de los dos, así que exigirlo
+    // aquí dejaba a ese universo entero sin poder enriquecerse jamás.
+    // enrichExistingUniversity() ahora resuelve el place_id por nombre+
+    // dirección cuando falta (findPlaceId), así que basta con requerir
+    // `location` (siempre presente, es requisito para aparecer en "cerca de
+    // ti") y que haya API key para poder buscar en Places.
     if (needsEnrichment && this.groq && budget > 0) {
       const toEnrich = dbNearby
-        .filter(
-          (u) =>
-            !u.steamPrograms?.length &&
-            (u.website?.trim() || (u.googlePlaceId && apiKey)),
-        )
+        .filter((u) => !u.steamPrograms?.length && (u.website?.trim() || apiKey))
         .sort((a, b) => (a.aiEnrichedAt ? 1 : 0) - (b.aiEnrichedAt ? 1 : 0))
         .slice(0, budget);
       budget -= toEnrich.length;
@@ -246,6 +251,17 @@ export class AiService {
   ): Promise<void> {
     try {
       let website: string | undefined = uni.website?.trim() || undefined;
+      if (!website && !uni.googlePlaceId && apiKey && uni.location) {
+        // Registro viejo (descubrimiento admin/DENUE) sin place_id guardado:
+        // se resuelve buscándolo por nombre+dirección antes de poder pedir
+        // su website vía Place Details.
+        try {
+          const placeId = await this.findPlaceId(apiKey, uni.name, uni.address, uni.location);
+          if (placeId) uni.googlePlaceId = placeId;
+        } catch (err) {
+          this.logger.warn(`findPlaceId falló para "${uni.name}": ${err.message || err}`);
+        }
+      }
       if (!website && uni.googlePlaceId && apiKey) {
         website = await this.fetchPlaceWebsite(apiKey, uni.googlePlaceId);
         if (website) uni.website = website;
@@ -1054,6 +1070,32 @@ SALIDA (JSON estricto, sin texto extra):
     const res = await fetch(url.toString());
     const data: any = await res.json();
     return data?.result?.website || undefined;
+  }
+
+  /**
+   * Resuelve el place_id de una universidad YA GUARDADA que no lo tiene
+   * (típico de descubrimientos viejos: botón admin de Places, DENUE) —
+   * Find Place From Text, sesgado por la ubicación real de la universidad
+   * para no confundirla con un campus homónimo en otra ciudad. Sin esto,
+   * enrichExistingUniversity() no tenía forma de pedir el website de esos
+   * registros y quedaban "vacíos" para siempre.
+   */
+  private async findPlaceId(
+    apiKey: string,
+    name: string,
+    address: string | undefined,
+    loc: { latitude: number; longitude: number },
+  ): Promise<string | undefined> {
+    const query = [name, address].filter(Boolean).join(', ');
+    const url = new URL('https://maps.googleapis.com/maps/api/place/findplacefromtext/json');
+    url.searchParams.set('key', apiKey);
+    url.searchParams.set('input', query);
+    url.searchParams.set('inputtype', 'textquery');
+    url.searchParams.set('fields', 'place_id');
+    url.searchParams.set('locationbias', `circle:2000@${loc.latitude},${loc.longitude}`);
+    const res = await fetch(url.toString());
+    const data: any = await res.json();
+    return data?.candidates?.[0]?.place_id || undefined;
   }
 
   /**
