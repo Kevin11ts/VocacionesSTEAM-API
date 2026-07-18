@@ -105,7 +105,12 @@ export class AiService {
     radiusKm = 25,
     limit = 40,
   ): Promise<(University & { distanceKm: number })[]> {
-    if (typeof lat !== 'number' || typeof lng !== 'number' || Number.isNaN(lat) || Number.isNaN(lng)) {
+    if (
+      typeof lat !== 'number' ||
+      typeof lng !== 'number' ||
+      Number.isNaN(lat) ||
+      Number.isNaN(lng)
+    ) {
       throw new Error('lat y lng son obligatorios');
     }
     const all = await this.universityRepository.find();
@@ -118,7 +123,10 @@ export class AiService {
           // se hayan colado en corridas viejas (por nombre) y lo que la IA
           // ya clasificó como no-universidad (por institutionType).
           !isExcludedInstitutionName(u.name) &&
-          !(u.institutionType && DISCARDED_INSTITUTION_TYPES.has(u.institutionType)),
+          !(
+            u.institutionType &&
+            DISCARDED_INSTITUTION_TYPES.has(u.institutionType)
+          ),
       )
       .map((u) => ({
         ...u,
@@ -200,6 +208,14 @@ export class AiService {
 
     const apiKey = this.configService.get<string>('GOOGLE_PLACES_API_KEY');
     let budget = AiService.MAX_SYNC_ENRICH;
+    // Cuando la zona aún tiene pocas instituciones, se reserva la mitad del
+    // presupuesto para descubrir nuevas. Antes los registros incompletos
+    // consumían siempre los 12 lugares y Places nunca llegaba a ejecutarse;
+    // por eso ampliar de 10 a 30/50 km mostraba exactamente la misma lista.
+    const discoveryReserve =
+      needsMoreCoverage && apiKey
+        ? Math.floor(AiService.MAX_SYNC_ENRICH / 2)
+        : 0;
 
     // ── 1) Existentes sin oferta verificada: enriquecerlas primero ─────────
     // Son las más baratas (sin Place Details si ya tienen website), son las
@@ -216,6 +232,7 @@ export class AiService {
     // `location` (siempre presente, es requisito para aparecer en "cerca de
     // ti") y que haya API key para poder buscar en Places.
     if (needsEnrichment && this.groq && budget > 0) {
+      const enrichmentBudget = budget - discoveryReserve;
       const toEnrich = dbNearby
         .filter(
           (u) =>
@@ -232,7 +249,7 @@ export class AiService {
           if (aUnverified !== bUnverified) return aUnverified - bUnverified;
           return a.updatedAt.getTime() - b.updatedAt.getTime();
         })
-        .slice(0, budget);
+        .slice(0, enrichmentBudget);
       budget -= toEnrich.length;
 
       await this.runInChunks(toEnrich, AiService.ENRICH_CHUNK_SIZE, (u) =>
@@ -308,14 +325,19 @@ export class AiService {
         );
         if (placeId) uni.googlePlaceId = placeId;
       } catch (err) {
-        this.logger.warn(`findPlaceId falló para "${uni.name}": ${err.message || err}`);
+        this.logger.warn(
+          `findPlaceId falló para "${uni.name}": ${err.message || err}`,
+        );
       }
     }
     if (!website && uni.googlePlaceId && apiKey) {
       website = await this.fetchPlaceWebsite(apiKey, uni.googlePlaceId);
       if (website) uni.website = website;
     }
-    if (!website) throw new Error('No se encontró un sitio oficial para verificar la oferta');
+    if (!website)
+      throw new Error(
+        'No se encontró un sitio oficial para verificar la oferta',
+      );
 
     const url = website.startsWith('http') ? website : `http://${website}`;
     const pages = await this.fetchSitePages(url);
@@ -348,25 +370,43 @@ export class AiService {
       uni.programsVerificationSource =
         verifiedPrograms[0]?.sourceUrl || pages[0]?.url || url;
       changed = previous !== JSON.stringify(verifiedPrograms);
-    } else if (!uni.programsVerifiedAt || uni.programsVerificationSource !== 'admin') {
+    } else if (
+      !uni.programsVerifiedAt ||
+      uni.programsVerificationSource !== 'admin'
+    ) {
       uni.programsVerifiedAt = uni.programsVerifiedAt || new Date();
       uni.programsVerificationSource = 'admin';
       changed = true;
     }
 
-    if (!uni.costTier && ['public', 'affordable', 'private-premium'].includes(parsed.costTier)) {
+    if (
+      !uni.costTier &&
+      ['public', 'affordable', 'private-premium'].includes(parsed.costTier)
+    ) {
       uni.costTier = parsed.costTier;
       changed = true;
     }
-    if (!uni.tuitionRange && typeof parsed.tuitionRange === 'string' && parsed.tuitionRange.trim()) {
+    if (
+      !uni.tuitionRange &&
+      typeof parsed.tuitionRange === 'string' &&
+      parsed.tuitionRange.trim()
+    ) {
       uni.tuitionRange = parsed.tuitionRange.trim();
       changed = true;
     }
-    if (!uni.modality && typeof parsed.modality === 'string' && parsed.modality.trim()) {
+    if (
+      !uni.modality &&
+      typeof parsed.modality === 'string' &&
+      parsed.modality.trim()
+    ) {
       uni.modality = parsed.modality.trim();
       changed = true;
     }
-    if (!uni.admissionDates && typeof parsed.admissionDates === 'string' && parsed.admissionDates.trim()) {
+    if (
+      !uni.admissionDates &&
+      typeof parsed.admissionDates === 'string' &&
+      parsed.admissionDates.trim()
+    ) {
       uni.admissionDates = parsed.admissionDates.trim();
       changed = true;
     }
@@ -382,10 +422,15 @@ export class AiService {
     return { changed, verifiedPrograms: usableProgramCount };
   }
 
-  private async markEnrichmentFailure(uni: University, error: unknown): Promise<void> {
+  private async markEnrichmentFailure(
+    uni: University,
+    error: unknown,
+  ): Promise<void> {
     try {
       const message =
-        error instanceof Error ? error.message : String(error || 'Error desconocido');
+        error instanceof Error
+          ? error.message
+          : String(error || 'Error desconocido');
       uni.aiEnrichmentStatus = 'failed';
       uni.aiEnrichmentError = message.slice(0, 1000);
       // save() actualiza updatedAt; el orden por updatedAt hace que el
@@ -416,9 +461,17 @@ export class AiService {
     for (const term of AiService.SEARCH_TERMS) {
       let results: any[] = [];
       try {
-        results = await this.placesNearbySearch(apiKey, lat, lng, radiusMeters, term);
+        results = await this.placesNearbySearch(
+          apiKey,
+          lat,
+          lng,
+          radiusMeters,
+          term,
+        );
       } catch (err) {
-        this.logger.error(`Nearby discovery falló ("${term}"): ${err.message || err}`);
+        this.logger.error(
+          `Nearby discovery falló ("${term}"): ${err.message || err}`,
+        );
         continue;
       }
       for (const place of results) {
@@ -438,17 +491,28 @@ export class AiService {
 
     // Dedupe determinista contra TODA la BD + contra el propio lote, por
     // ubicación física (<150m) — mismo criterio que discoverUniversities().
-    const existing = await this.universityRepository.find({ select: ['location'] });
+    const existing = await this.universityRepository.find({
+      select: ['location'],
+    });
     const locationIndex = this.buildLocationIndex(
-      existing.map((u) => u.location).filter((l): l is { latitude: number; longitude: number } => !!l),
+      existing
+        .map((u) => u.location)
+        .filter((l): l is { latitude: number; longitude: number } => !!l),
     );
 
-    const newCandidates: { place: any; loc: { latitude: number; longitude: number }; distanceKm: number }[] = [];
+    const newCandidates: {
+      place: any;
+      loc: { latitude: number; longitude: number };
+      distanceKm: number;
+    }[] = [];
     for (const place of rawCandidates) {
       const loc =
         typeof place.geometry?.location?.lat === 'number' &&
         typeof place.geometry?.location?.lng === 'number'
-          ? { latitude: place.geometry.location.lat, longitude: place.geometry.location.lng }
+          ? {
+              latitude: place.geometry.location.lat,
+              longitude: place.geometry.location.lng,
+            }
           : undefined;
       if (!loc) continue;
       if (this.isNearIndexedLocation(locationIndex, loc)) continue; // ya existe en BD o ya visto en este lote
@@ -456,7 +520,10 @@ export class AiService {
       newCandidates.push({
         place,
         loc,
-        distanceKm: haversineKm({ lat, lng }, { lat: loc.latitude, lng: loc.longitude }),
+        distanceKm: haversineKm(
+          { lat, lng },
+          { lat: loc.latitude, lng: loc.longitude },
+        ),
       });
     }
     if (!newCandidates.length) return;
@@ -467,10 +534,14 @@ export class AiService {
       .slice(0, budget);
 
     const newRows: Partial<University>[] = [];
-    await this.runInChunks(toProcess, AiService.ENRICH_CHUNK_SIZE, async ({ place, loc }) => {
-      const row = await this.validateNewCandidate(place, loc, apiKey);
-      if (row) newRows.push(row);
-    });
+    await this.runInChunks(
+      toProcess,
+      AiService.ENRICH_CHUNK_SIZE,
+      async ({ place, loc }) => {
+        const row = await this.validateNewCandidate(place, loc, apiKey);
+        if (row) newRows.push(row);
+      },
+    );
 
     // Los candidatos SIN website no pasaron por la validación completa (no
     // hay sitio que leer) — antes se guardaban directo como 'unverified' y
@@ -572,7 +643,9 @@ SALIDA (JSON estricto, sin texto extra):
     try {
       website = await this.fetchPlaceWebsite(apiKey, place.place_id);
     } catch (err) {
-      this.logger.warn(`Place Details falló para "${place.name}": ${err.message || err}`);
+      this.logger.warn(
+        `Place Details falló para "${place.name}": ${err.message || err}`,
+      );
     }
 
     if (!website || !this.groq) {
@@ -596,7 +669,9 @@ SALIDA (JSON estricto, sin texto extra):
       const cleaned = raw.replace(/```json|```/g, '').trim();
       const parsed = JSON.parse(cleaned);
       const institutionType =
-        typeof parsed.institutionType === 'string' ? parsed.institutionType : 'unverified';
+        typeof parsed.institutionType === 'string'
+          ? parsed.institutionType
+          : 'unverified';
 
       if (DISCARDED_INSTITUTION_TYPES.has(institutionType)) {
         await this.logAiDiscard(place.name, institutionType);
@@ -614,7 +689,9 @@ SALIDA (JSON estricto, sin texto extra):
         website: url,
         institutionType,
         steamPrograms: steamPrograms.length ? steamPrograms : undefined,
-        costTier: ['public', 'affordable', 'private-premium'].includes(parsed.costTier)
+        costTier: ['public', 'affordable', 'private-premium'].includes(
+          parsed.costTier,
+        )
           ? parsed.costTier
           : undefined,
         tuitionRange:
@@ -626,7 +703,8 @@ SALIDA (JSON estricto, sin texto extra):
             ? parsed.modality.trim()
             : undefined,
         admissionDates:
-          typeof parsed.admissionDates === 'string' && parsed.admissionDates.trim()
+          typeof parsed.admissionDates === 'string' &&
+          parsed.admissionDates.trim()
             ? parsed.admissionDates.trim()
             : undefined,
         programsVerifiedAt: new Date(),
@@ -638,7 +716,9 @@ SALIDA (JSON estricto, sin texto extra):
         aiEnrichmentError: null,
       };
     } catch (err) {
-      this.logger.warn(`Descubrimiento con IA falló para "${place.name}": ${err.message || err}`);
+      this.logger.warn(
+        `Descubrimiento con IA falló para "${place.name}": ${err.message || err}`,
+      );
       // No se pudo confirmar con IA (sitio caído/timeout): se guarda igual
       // como "unverified" en vez de perder el candidato para siempre.
       return {
@@ -647,12 +727,17 @@ SALIDA (JSON estricto, sin texto extra):
         institutionType: 'unverified',
         aiEnrichmentStatus: 'failed',
         aiEnrichmentError:
-          err instanceof Error ? err.message.slice(0, 1000) : String(err).slice(0, 1000),
+          err instanceof Error
+            ? err.message.slice(0, 1000)
+            : String(err).slice(0, 1000),
       };
     }
   }
 
-  private async logAiDiscard(name: string, institutionType: string): Promise<void> {
+  private async logAiDiscard(
+    name: string,
+    institutionType: string,
+  ): Promise<void> {
     try {
       await this.aiLogRepository.save(
         this.aiLogRepository.create({
@@ -779,7 +864,10 @@ SALIDA (JSON estricto, sin texto extra):
           c.some(
             (member) =>
               haversineKm(
-                { lat: member.location.latitude, lng: member.location.longitude },
+                {
+                  lat: member.location.latitude,
+                  lng: member.location.longitude,
+                },
                 { lat: u.location.latitude, lng: u.location.longitude },
               ) < AiService.DUPLICATE_CLEANUP_RADIUS_KM,
           ),
@@ -833,7 +921,8 @@ SALIDA (JSON estricto, sin texto extra):
         errors.push({
           index,
           name,
-          error: 'Falta location.latitude/longitude (obligatorio para el matching)',
+          error:
+            'Falta location.latitude/longitude (obligatorio para el matching)',
         });
         continue;
       }
@@ -902,13 +991,23 @@ SALIDA (JSON estricto, sin texto extra):
       const name = typeof row?.name === 'string' ? row.name.trim() : undefined;
 
       if (!id || typeof id !== 'string') {
-        errors.push({ index, name, error: 'Falta "id" (usa el export, no edites/borres ese campo)' });
+        errors.push({
+          index,
+          name,
+          error: 'Falta "id" (usa el export, no edites/borres ese campo)',
+        });
         continue;
       }
       try {
-        const existing = await this.universityRepository.findOne({ where: { id } });
+        const existing = await this.universityRepository.findOne({
+          where: { id },
+        });
         if (!existing) {
-          errors.push({ index, name, error: `No existe una universidad con id "${id}"` });
+          errors.push({
+            index,
+            name,
+            error: `No existe una universidad con id "${id}"`,
+          });
           continue;
         }
         const { id: _ignored, createdAt, updatedAt, ...fields } = row as any;
@@ -986,38 +1085,38 @@ SALIDA (JSON estricto, sin texto extra):
 
   /** Código de entidad INEGI (01-32) por nombre de estado — mismos 32 nombres que DISCOVERY_CITIES. */
   private static readonly INEGI_STATE_CODES: Record<string, string> = {
-    'Aguascalientes': '01',
+    Aguascalientes: '01',
     'Baja California': '02',
     'Baja California Sur': '03',
-    'Campeche': '04',
-    'Coahuila': '05',
-    'Colima': '06',
-    'Chiapas': '07',
-    'Chihuahua': '08',
-    'CDMX': '09',
-    'Durango': '10',
-    'Guanajuato': '11',
-    'Guerrero': '12',
-    'Hidalgo': '13',
-    'Jalisco': '14',
+    Campeche: '04',
+    Coahuila: '05',
+    Colima: '06',
+    Chiapas: '07',
+    Chihuahua: '08',
+    CDMX: '09',
+    Durango: '10',
+    Guanajuato: '11',
+    Guerrero: '12',
+    Hidalgo: '13',
+    Jalisco: '14',
     'Estado de México': '15',
-    'Michoacán': '16',
-    'Morelos': '17',
-    'Nayarit': '18',
+    Michoacán: '16',
+    Morelos: '17',
+    Nayarit: '18',
     'Nuevo León': '19',
-    'Oaxaca': '20',
-    'Puebla': '21',
-    'Querétaro': '22',
+    Oaxaca: '20',
+    Puebla: '21',
+    Querétaro: '22',
     'Quintana Roo': '23',
     'San Luis Potosí': '24',
-    'Sinaloa': '25',
-    'Sonora': '26',
-    'Tabasco': '27',
-    'Tamaulipas': '28',
-    'Tlaxcala': '29',
-    'Veracruz': '30',
-    'Yucatán': '31',
-    'Zacatecas': '32',
+    Sinaloa: '25',
+    Sonora: '26',
+    Tabasco: '27',
+    Tamaulipas: '28',
+    Tlaxcala: '29',
+    Veracruz: '30',
+    Yucatán: '31',
+    Zacatecas: '32',
   };
 
   private normalizeName(name: string): string {
@@ -1169,7 +1268,9 @@ SALIDA (JSON estricto, sin texto extra):
     radiusMeters: number,
     keyword: string,
   ): Promise<any[]> {
-    const url = new URL('https://maps.googleapis.com/maps/api/place/nearbysearch/json');
+    const url = new URL(
+      'https://maps.googleapis.com/maps/api/place/nearbysearch/json',
+    );
     url.searchParams.set('key', apiKey);
     url.searchParams.set('location', `${lat},${lng}`);
     url.searchParams.set('radius', String(Math.min(radiusMeters, 50000)));
@@ -1178,14 +1279,21 @@ SALIDA (JSON estricto, sin texto extra):
     const res = await fetch(url.toString());
     const data: any = await res.json();
     if (data.status !== 'OK' && data.status !== 'ZERO_RESULTS') {
-      this.logger.warn(`Places Nearby "${data.status}" para "${keyword}": ${data.error_message || ''}`);
+      this.logger.warn(
+        `Places Nearby "${data.status}" para "${keyword}": ${data.error_message || ''}`,
+      );
     }
     return data.results || [];
   }
 
   /** Place Details (solo el campo `website`) — Nearby/Text Search no lo incluyen. */
-  private async fetchPlaceWebsite(apiKey: string, placeId: string): Promise<string | undefined> {
-    const url = new URL('https://maps.googleapis.com/maps/api/place/details/json');
+  private async fetchPlaceWebsite(
+    apiKey: string,
+    placeId: string,
+  ): Promise<string | undefined> {
+    const url = new URL(
+      'https://maps.googleapis.com/maps/api/place/details/json',
+    );
     url.searchParams.set('key', apiKey);
     url.searchParams.set('place_id', placeId);
     url.searchParams.set('fields', 'website');
@@ -1209,12 +1317,17 @@ SALIDA (JSON estricto, sin texto extra):
     loc: { latitude: number; longitude: number },
   ): Promise<string | undefined> {
     const query = [name, address].filter(Boolean).join(', ');
-    const url = new URL('https://maps.googleapis.com/maps/api/place/findplacefromtext/json');
+    const url = new URL(
+      'https://maps.googleapis.com/maps/api/place/findplacefromtext/json',
+    );
     url.searchParams.set('key', apiKey);
     url.searchParams.set('input', query);
     url.searchParams.set('inputtype', 'textquery');
     url.searchParams.set('fields', 'place_id');
-    url.searchParams.set('locationbias', `circle:2000@${loc.latitude},${loc.longitude}`);
+    url.searchParams.set(
+      'locationbias',
+      `circle:2000@${loc.latitude},${loc.longitude}`,
+    );
     const res = await fetch(url.toString());
     const data: any = await res.json();
     return data?.candidates?.[0]?.place_id || undefined;
@@ -1268,7 +1381,9 @@ SALIDA (JSON estricto, sin texto extra):
       select: ['location'],
     });
     const locationIndex = this.buildLocationIndex(
-      existing.map((u) => u.location).filter((l): l is { latitude: number; longitude: number } => !!l),
+      existing
+        .map((u) => u.location)
+        .filter((l): l is { latitude: number; longitude: number } => !!l),
     );
 
     const seenPlaceIds = new Set<string>();
@@ -1307,7 +1422,10 @@ SALIDA (JSON estricto, sin texto extra):
           const loc =
             typeof place.geometry?.location?.lat === 'number' &&
             typeof place.geometry?.location?.lng === 'number'
-              ? { latitude: place.geometry.location.lat, longitude: place.geometry.location.lng }
+              ? {
+                  latitude: place.geometry.location.lat,
+                  longitude: place.geometry.location.lng,
+                }
               : undefined;
 
           // Duplicado = misma UBICACIÓN física (<150m), sin importar el
@@ -1413,7 +1531,9 @@ SALIDA (JSON estricto, sin texto extra):
       select: ['location'],
     });
     const locationIndex = this.buildLocationIndex(
-      existing.map((u) => u.location).filter((l): l is { latitude: number; longitude: number } => !!l),
+      existing
+        .map((u) => u.location)
+        .filter((l): l is { latitude: number; longitude: number } => !!l),
     );
 
     const PAGE_SIZE = 300;
@@ -1462,9 +1582,10 @@ SALIDA (JSON estricto, sin texto extra):
           newRows.push({
             name: nombre,
             location: loc,
-            address: [row.Tipo_vialidad, row.Calle, row.Num_Exterior, row.Colonia]
-              .filter(Boolean)
-              .join(' ') || undefined,
+            address:
+              [row.Tipo_vialidad, row.Calle, row.Num_Exterior, row.Colonia]
+                .filter(Boolean)
+                .join(' ') || undefined,
             website: row.Sitio_internet
               ? row.Sitio_internet.toLowerCase().startsWith('http')
                 ? row.Sitio_internet.toLowerCase()
@@ -1493,10 +1614,26 @@ SALIDA (JSON estricto, sin texto extra):
 
   private decodeHtmlEntities(value: string): string {
     const named: Record<string, string> = {
-      nbsp: ' ', amp: '&', quot: '"', apos: "'", lt: '<', gt: '>',
-      aacute: 'á', eacute: 'é', iacute: 'í', oacute: 'ó', uacute: 'ú',
-      Aacute: 'Á', Eacute: 'É', Iacute: 'Í', Oacute: 'Ó', Uacute: 'Ú',
-      ntilde: 'ñ', Ntilde: 'Ñ', uuml: 'ü', Uuml: 'Ü',
+      nbsp: ' ',
+      amp: '&',
+      quot: '"',
+      apos: "'",
+      lt: '<',
+      gt: '>',
+      aacute: 'á',
+      eacute: 'é',
+      iacute: 'í',
+      oacute: 'ó',
+      uacute: 'ú',
+      Aacute: 'Á',
+      Eacute: 'É',
+      Iacute: 'Í',
+      Oacute: 'Ó',
+      Uacute: 'Ú',
+      ntilde: 'ñ',
+      Ntilde: 'Ñ',
+      uuml: 'ü',
+      Uuml: 'Ü',
     };
     return value
       .replace(/&([A-Za-z]+);/g, (full, name: string) => named[name] ?? full)
@@ -1527,18 +1664,21 @@ SALIDA (JSON estricto, sin texto extra):
         headers: {
           'User-Agent':
             'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-          Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          Accept:
+            'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
           'Accept-Language': 'es-MX,es;q=0.9',
         },
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const html = await res.text();
-      const text = this.decodeHtmlEntities(html
-        .replace(/<script[\s\S]*?<\/script>/gi, ' ')
-        .replace(/<style[\s\S]*?<\/style>/gi, ' ')
-        .replace(/<[^>]+>/g, ' ')
-        .replace(/\s+/g, ' ')
-        .trim());
+      const text = this.decodeHtmlEntities(
+        html
+          .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+          .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+          .replace(/<[^>]+>/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim(),
+      );
       return { url: res.url || url, html, text };
     } finally {
       clearTimeout(timer);
@@ -1555,16 +1695,22 @@ SALIDA (JSON estricto, sin texto extra):
     // carreras y páginas de admisión/costos. Se revisa TODO el HTML: el límite
     // anterior de 12 enlaces dejaba fuera la oferta STEAM cuando el menú
     // listaba primero administración, derecho o humanidades.
-    const INDEX = /oferta[\s_/-]*(academica|educativa)|licenciaturas?|ingenierias?|carreras?|programas?[\s_/-]*(academicos|educativos)/i;
-    const DEGREE = /licenciatur|ingenier|arquitect|actuari|biolog|fisic|quimic|matematic|comput|software|sistemas|tecnolog|dise[nñ]|artes?|musica/i;
+    const INDEX =
+      /oferta[\s_/-]*(academica|educativa)|licenciaturas?|ingenierias?|carreras?|programas?[\s_/-]*(academicos|educativos)/i;
+    const DEGREE =
+      /licenciatur|ingenier|arquitect|actuari|biolog|fisic|quimic|matematic|comput|software|sistemas|tecnolog|dise[nñ]|artes?|musica/i;
     const INFO = /colegiatura|costo|admisi|inscripci|convocatoria/i;
-    const EXCLUDE = /maestr|doctor|posgrado|diplomado|curso|blog|noticia|wp-content|\.pdf(?:$|\?)/i;
+    const EXCLUDE =
+      /maestr|doctor|posgrado|diplomado|curso|blog|noticia|wp-content|\.pdf(?:$|\?)/i;
     const found: { url: string; score: number }[] = [];
     const re = /<a\b[^>]*href=["']([^"'#]+)["'][^>]*>([\s\S]{0,200}?)<\/a>/gi;
     let m: RegExpExecArray | null;
     while ((m = re.exec(html)) !== null) {
       const href = m[1];
-      const label = m[2].replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+      const label = m[2]
+        .replace(/<[^>]+>/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
       const sample = `${href} ${label}`;
       if (EXCLUDE.test(sample)) continue;
       const score = INDEX.test(sample)
@@ -1578,7 +1724,8 @@ SALIDA (JSON estricto, sin texto extra):
       try {
         const abs = new URL(href, baseUrl);
         if (!/^https?:$/.test(abs.protocol)) continue;
-        const host = (value: string) => value.toLowerCase().replace(/^www\./, '');
+        const host = (value: string) =>
+          value.toLowerCase().replace(/^www\./, '');
         if (host(abs.hostname) !== host(new URL(baseUrl).hostname)) continue;
         abs.hash = '';
         const clean = abs.toString();
@@ -1614,7 +1761,9 @@ SALIDA (JSON estricto, sin texto extra):
     const subLinks = this.extractCandidateLinks(home.html, home.url);
     if (subLinks.length) {
       const subs = await Promise.allSettled(
-        subLinks.map((link) => this.fetchPage(link, this.ENRICH_SUBPAGE_TIMEOUT_MS)),
+        subLinks.map((link) =>
+          this.fetchPage(link, this.ENRICH_SUBPAGE_TIMEOUT_MS),
+        ),
       );
       subs.forEach((s) => {
         if (s.status === 'fulfilled' && s.value.text.length >= 50) {
@@ -1624,7 +1773,9 @@ SALIDA (JSON estricto, sin texto extra):
     }
 
     if (!pages.some((page) => page.text.trim().length >= 50)) {
-      throw new Error('La página no devolvió suficiente texto (¿SPA sin contenido server-rendered?)');
+      throw new Error(
+        'La página no devolvió suficiente texto (¿SPA sin contenido server-rendered?)',
+      );
     }
     return pages;
   }
@@ -1642,12 +1793,25 @@ SALIDA (JSON estricto, sin texto extra):
       .join('\n\n');
   }
 
-  private withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  private withTimeout<T>(
+    promise: Promise<T>,
+    ms: number,
+    label: string,
+  ): Promise<T> {
     return new Promise<T>((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error(`Timeout de ${ms}ms en ${label}`)), ms);
+      const timer = setTimeout(
+        () => reject(new Error(`Timeout de ${ms}ms en ${label}`)),
+        ms,
+      );
       promise.then(
-        (v) => { clearTimeout(timer); resolve(v); },
-        (e) => { clearTimeout(timer); reject(e); },
+        (v) => {
+          clearTimeout(timer);
+          resolve(v);
+        },
+        (e) => {
+          clearTimeout(timer);
+          reject(e);
+        },
       );
     });
   }
@@ -1717,7 +1881,10 @@ SALIDA (JSON estricto, sin texto extra):
    * tiene acceso a RVOE/SEP ni a otros sistemas de gobierno), igual que el
    * enriquecimiento admin existente.
    */
-  private buildDiscoveryPrompt(universityName: string, siteText: string): string {
+  private buildDiscoveryPrompt(
+    universityName: string,
+    siteText: string,
+  ): string {
     return `SISTEMA:
 Eres un asistente que valida y extrae datos EXPLÍCITOS de la página web oficial
 de una posible institución de educación superior en México. NUNCA inventes ni
@@ -1803,7 +1970,10 @@ SALIDA (JSON estricto, sin texto extra):
   // `filter` (opcional): texto a buscar en nombre/dirección (sin acentos,
   // sin mayúsculas) para priorizar una zona — sin él, el orden por
   // createdAt haría imposible llegar a estados descubiertos al final.
-  async enrichUniversitiesWithAi(limit = 12, filter?: string): Promise<{
+  async enrichUniversitiesWithAi(
+    limit = 12,
+    filter?: string,
+  ): Promise<{
     processed: number;
     enriched: number;
     skipped: number;
@@ -1863,21 +2033,35 @@ SALIDA (JSON estricto, sin texto extra):
           );
           return { uni, result };
         } catch (err) {
-          this.logger.warn(`Enriquecimiento falló para "${uni.name}": ${err.message || err}`);
+          this.logger.warn(
+            `Enriquecimiento falló para "${uni.name}": ${err.message || err}`,
+          );
           await this.markEnrichmentFailure(uni, err);
-          return { uni, error: err instanceof Error ? err.message : String(err) };
+          return {
+            uni,
+            error: err instanceof Error ? err.message : String(err),
+          };
         }
       },
     );
 
     for (const outcome of outcomes) {
       if (outcome.status === 'rejected') {
-        errors.push({ name: 'Universidad desconocida', error: String(outcome.reason) });
+        errors.push({
+          name: 'Universidad desconocida',
+          error: String(outcome.reason),
+        });
         continue;
       }
       if (outcome.value.error) {
-        errors.push({ name: outcome.value.uni.name, error: outcome.value.error });
-      } else if (outcome.value.result?.changed || outcome.value.result?.verifiedPrograms) {
+        errors.push({
+          name: outcome.value.uni.name,
+          error: outcome.value.error,
+        });
+      } else if (
+        outcome.value.result?.changed ||
+        outcome.value.result?.verifiedPrograms
+      ) {
         enriched++;
       } else {
         skipped++;

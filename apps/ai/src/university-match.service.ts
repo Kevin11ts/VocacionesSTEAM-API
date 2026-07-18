@@ -39,8 +39,8 @@ import { recommendationPrograms } from './program-verification';
  *
  *   CAPA 2 (IA): lotes acotados con la lista candidata; la IA ajusta
  *   el baseScore (±15 máx) y redacta la explicación. Salida validada:
- *   universidades fuera de la lista se descartan. El resultado se cachea
- *   y los filtros (km, costo) se aplican sobre el caché al instante.
+ *   universidades fuera de la lista se descartan. El radio define la lista
+ *   y su caché; el filtro de costo se aplica después sin recalcular la IA.
  */
 /** Nombre de proveedor con el que se cachea la degradación cuando la IA falla. */
 const DETERMINISTIC_FALLBACK_PROVIDER = 'deterministic-fallback';
@@ -54,18 +54,20 @@ const PARTIAL_CACHE_TTL_MS = 60 * 1000;
 const PROVIDER_TIMEOUT_MS = 12_000;
 
 /**
- * La IA analiza hasta 24 candidatas en lotes pequeños de 4. Dos lotes corren
- * a la vez: cubre todas las opciones visibles en la mayoría de zonas sin
- * degradar el JSON ni golpear el rate limit con 24 peticiones simultáneas.
+ * La IA analiza hasta 60 candidatas en lotes pequeños de 4. Este trabajo
+ * corre en segundo plano: el ranking determinista completo llega primero y
+ * la pantalla se actualiza cuando terminan los lotes.
  */
 const AI_BATCH_SIZE = 4;
 const AI_BATCH_CONCURRENCY = 2;
-const MAX_AI_CANDIDATES = 24;
+const MAX_AI_CANDIDATES = 60;
 
 @Injectable()
 export class UniversityMatchService {
   private readonly logger = new Logger(UniversityMatchService.name);
   private readonly groq: Groq | null;
+  /** Evita duplicar el mismo análisis mientras el frontend consulta su avance. */
+  private readonly aiJobsInFlight = new Map<string, Promise<void>>();
 
   constructor(
     private readonly configService: ConfigService,
@@ -117,26 +119,41 @@ export class UniversityMatchService {
         generatedAt: new Date().toISOString(),
         aiAnalyzedCount: 0,
         candidateCount: 0,
+        aiProcessing: false,
       };
     }
 
     // ── CAPA 2: lotes concurrentes de IA, cacheados ──────────────────────
     const cacheKey = this.buildCacheKey(request, careers, candidates);
     let aiResult = await this.loadCachedAdjustments(userId, cacheKey);
+    let aiProcessing = aiResult?.provider === PARTIAL_AI_PROVIDER;
     if (!aiResult) {
-      aiResult = await this.requestAiAdjustments(
-        userId,
-        candidates,
-        careers,
-        dominantAxes,
-        calibrationLevel,
-        request,
-        cacheKey,
-      );
+      if (this.groq) {
+        aiProcessing = true;
+        this.startAiJob(
+          userId,
+          candidates,
+          careers,
+          dominantAxes,
+          calibrationLevel,
+          request,
+          cacheKey,
+        );
+      } else {
+        aiResult = await this.requestAiAdjustments(
+          userId,
+          candidates,
+          careers,
+          dominantAxes,
+          calibrationLevel,
+          request,
+          cacheKey,
+        );
+      }
     }
     const adjustments = aiResult?.adjustments ?? null;
 
-    // ── Ensamble + filtros sobre el caché (sin IA) ────────────────────────
+    // ── Ensamble + filtro de costo sobre el caché (sin IA) ────────────────
     // El ajuste de la IA se guardó como score sobre el baseScore NEUTRAL;
     // aquí se traduce a delta y se aplica sobre el baseScore con la
     // preferencia de costo real del request (filtros instantáneos).
@@ -148,6 +165,10 @@ export class UniversityMatchService {
         costPreference: request.filters.costPreference,
         rating: c.rating,
         matchType: c.matchType,
+        maxDistanceKm: Math.max(
+          1,
+          Math.min(request.filters.maxDistanceKm, MAX_DISTANCE_KM),
+        ),
       });
       const aiDelta = adjustment ? adjustment.matchScore - c.baseScore : 0;
       return {
@@ -186,6 +207,7 @@ export class UniversityMatchService {
       aiAnalyzedCount: filteredMatches.filter((match) => match.aiAnalyzed)
         .length,
       candidateCount: filteredMatches.length,
+      aiProcessing,
       aiProvider:
         aiResult && aiResult.provider !== DETERMINISTIC_FALLBACK_PROVIDER
           ? aiResult.provider === PARTIAL_AI_PROVIDER
@@ -243,6 +265,10 @@ export class UniversityMatchService {
     const universities = await this.universityRepository.find();
     const origin = request.userLocation;
     const candidates: UniversityCandidate[] = [];
+    const requestedRadiusKm = Math.max(
+      1,
+      Math.min(request.filters.maxDistanceKm, MAX_DISTANCE_KM),
+    );
 
     const located = universities.filter((u) => {
       if (
@@ -266,9 +292,19 @@ export class UniversityMatchService {
       return true;
     });
 
-    const distances = await this.resolveDistances(origin, located);
+    // La distancia recta nunca supera a la distancia por carretera. Este
+    // prefiltro evita consultar y analizar instituciones que necesariamente
+    // quedarán fuera del radio que eligió el alumno.
+    const locatedInsideRadius = located.filter(
+      (university) =>
+        haversineKm(origin, {
+          lat: university.location.latitude,
+          lng: university.location.longitude,
+        }) <= requestedRadiusKm,
+    );
+    const distances = await this.resolveDistances(origin, locatedInsideRadius);
 
-    for (const university of located) {
+    for (const university of locatedInsideRadius) {
       const verifiedPrograms = recommendationPrograms(university);
       // Matching en 2 niveles: directo (nombre) o por eje STEAM (área).
       // Solo se excluye si no tiene programas o ninguno cae en los ejes
@@ -280,7 +316,7 @@ export class UniversityMatchService {
       if (!careerMatch) continue;
 
       const distanceKm = distances.get(university.id);
-      if (distanceKm === undefined || distanceKm > MAX_DISTANCE_KM) continue;
+      if (distanceKm === undefined || distanceKm > requestedRadiusKm) continue;
 
       // Sin costTier en BD se asume 'affordable' (neutral); el admin debe
       // completar el dato para un ranking más fiel.
@@ -310,6 +346,7 @@ export class UniversityMatchService {
           costPreference: 'any',
           rating,
           matchType: careerMatch.matchType,
+          maxDistanceKm: requestedRadiusKm,
         }),
         websiteUrl: university.website ?? undefined,
         address: university.address ?? undefined,
@@ -397,6 +434,37 @@ export class UniversityMatchService {
   //  CAPA 2 — IA (ranking fino + explicación), cacheada
   // ==========================================================================
 
+  private startAiJob(
+    userId: string,
+    candidates: UniversityCandidate[],
+    careers: RecommendedCareerInput[],
+    dominantAxes: string[],
+    calibrationLevel: number,
+    request: UniversityMatchRequest,
+    cacheKey: string,
+  ): void {
+    const jobKey = `${userId}:${cacheKey}`;
+    if (this.aiJobsInFlight.has(jobKey)) return;
+
+    const job = this.requestAiAdjustments(
+      userId,
+      candidates,
+      careers,
+      dominantAxes,
+      calibrationLevel,
+      request,
+      cacheKey,
+    )
+      .then(() => undefined)
+      .catch((error) => {
+        this.logger.error(
+          `A8 en segundo plano falló: ${this.describeProviderError(error)}`,
+        );
+      })
+      .finally(() => this.aiJobsInFlight.delete(jobKey));
+    this.aiJobsInFlight.set(jobKey, job);
+  }
+
   private buildCacheKey(
     request: UniversityMatchRequest,
     careers: RecommendedCareerInput[],
@@ -408,6 +476,10 @@ export class UniversityMatchService {
         lat: Math.round(request.userLocation.lat * 1000) / 1000,
         lng: Math.round(request.userLocation.lng * 1000) / 1000,
       },
+      maxDistanceKm: Math.max(
+        1,
+        Math.min(request.filters.maxDistanceKm, MAX_DISTANCE_KM),
+      ),
       candidates: candidates
         .map((c) => ({
           id: c.universityId,
@@ -459,7 +531,7 @@ export class UniversityMatchService {
     provider: string;
   } | null> {
     // Se prioriza por baseScore, pero todas las candidatas visibles en una
-    // zona normal caben en los lotes (hasta 24).
+    // zona normal caben en los lotes (hasta 60).
     const aiCandidates = [...candidates]
       .sort((a, b) => b.baseScore - a.baseScore)
       .slice(0, MAX_AI_CANDIDATES);

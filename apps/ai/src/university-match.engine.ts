@@ -17,7 +17,7 @@ import {
  * la explicación personalizada.
  */
 
-/** Radio máximo de búsqueda de candidatas (km). Los filtros acotan después. */
+/** Radio máximo permitido; el radio elegido por el alumno acota antes de A8. */
 export const MAX_DISTANCE_KM = 100;
 
 /**

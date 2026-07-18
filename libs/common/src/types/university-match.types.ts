@@ -92,6 +92,8 @@ export interface UniversityMatchResponse {
   aiAnalyzedCount?: number;
   /** Total de candidatas reales visibles después de aplicar filtros. */
   candidateCount?: number;
+  /** true mientras el ranking IA se calcula en segundo plano. */
+  aiProcessing?: boolean;
   /**
    * Origen del ranking fino: 'Groq' cuando la IA explicó los matches, o
    * 'deterministic' si se degradó a baseScore puro (IA caída o sin API key).

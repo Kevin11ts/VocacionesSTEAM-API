@@ -9,8 +9,8 @@ import {
 
 /**
  * Caché del ranking de A8 por usuario. La IA se llama UNA vez por
- * combinación de carreras+ubicación+candidatas (cacheKey); los filtros de
- * km/costo se aplican sobre este caché sin volver a llamar a la IA.
+ * combinación de carreras+ubicación+radio+candidatas (cacheKey); el filtro
+ * de costo se aplica sobre este caché sin volver a llamar a la IA.
  */
 @Entity('university_match_cache')
 export class UniversityMatchCache {
