@@ -14,12 +14,19 @@ import {
   UniversitiesController,
   AdminUniversitiesController,
 } from './universities.controller';
-import { CareerSimulatorsController } from './career-simulators.controller';
+import {
+  CareerSimulatorsController,
+  AdminCareerSimulatorsController,
+} from './career-simulators.controller';
+import { AdminQuestionsController } from './admin-questions.controller';
 import {
   ComplementaryTestsController,
   AdminComplementaryTestsController,
 } from './complementary-tests.controller';
-import { AdminStatsController } from './admin.controller';
+import {
+  AdminStatsController,
+  AdminSystemController,
+} from './admin.controller';
 import { RolesGuard } from './guards/roles.guard';
 import {
   CareersController,
@@ -101,9 +108,12 @@ import { MotorGatewayController } from './motor.controller';
     UniversitiesController,
     AdminUniversitiesController,
     CareerSimulatorsController,
+    AdminCareerSimulatorsController,
+    AdminQuestionsController,
     ComplementaryTestsController,
     AdminComplementaryTestsController,
     AdminStatsController,
+    AdminSystemController,
     CareersController,
     AdminCareersCatalogController,
     ProfileGatewayController,

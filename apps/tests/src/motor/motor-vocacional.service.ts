@@ -45,6 +45,48 @@ export class MotorVocacionalService {
     return this.baseUrl.length > 0;
   }
 
+  async getHealth(): Promise<{
+    status: 'operational' | 'degraded' | 'unconfigured';
+    latencyMs: number | null;
+    detail: string;
+  }> {
+    if (!this.isConfigured) {
+      return {
+        status: 'unconfigured',
+        latencyMs: null,
+        detail: 'MOTOR_VOCACIONAL_URL no está configurada',
+      };
+    }
+    const startedAt = Date.now();
+    try {
+      const response = await fetch(`${this.baseUrl}/health`, {
+        signal: AbortSignal.timeout(5000),
+      });
+      const latencyMs = Date.now() - startedAt;
+      if (!response.ok) {
+        return {
+          status: 'degraded',
+          latencyMs,
+          detail: `Healthcheck respondió HTTP ${response.status}`,
+        };
+      }
+      return {
+        status: 'operational',
+        latencyMs,
+        detail: 'Motor A0–A8 disponible',
+      };
+    } catch (error) {
+      return {
+        status: 'degraded',
+        latencyMs: Date.now() - startedAt,
+        detail:
+          error instanceof Error
+            ? error.message
+            : 'No respondió al healthcheck',
+      };
+    }
+  }
+
   private async post<T>(path: string, body: unknown): Promise<T> {
     if (!this.isConfigured) {
       throw new RpcException(

@@ -59,6 +59,16 @@ export class AdminCareersCatalogController {
     @Inject('TESTS_SERVICE') private readonly testsClient: ClientProxy,
   ) {}
 
+  @Get()
+  @ApiOperation({
+    summary: 'List all A6/A7 catalogs and axis metadata (Admin)',
+  })
+  async getCatalogs() {
+    return lastValueFrom(
+      this.testsClient.send({ cmd: 'tests.get-catalogs' }, {}),
+    );
+  }
+
   // --- Vocaciones (A6) ---
 
   @ApiOperation({ summary: 'Create a vocation catalog entry (Admin only)' })

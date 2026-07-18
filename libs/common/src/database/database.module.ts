@@ -14,7 +14,10 @@ import { ConfigService } from '@nestjs/config';
             type: 'postgres',
             url: databaseUrl,
             autoLoadEntities: true,
-            synchronize: true, // Crea tablas automáticamente en Railway
+            // En producción el esquema nunca debe mutar al arrancar. Para un
+            // entorno temporal se puede habilitar de forma explícita.
+            synchronize:
+              configService.get<string>('DB_SYNCHRONIZE', 'false') === 'true',
             ssl: { rejectUnauthorized: false }, // Requerido por Railway
           };
         }
@@ -27,7 +30,8 @@ import { ConfigService } from '@nestjs/config';
           password: configService.get<string>('DB_PASSWORD', 'postgres'),
           database: configService.get<string>('DB_NAME', 'steam_vocations'),
           autoLoadEntities: true,
-          synchronize: true,
+          synchronize:
+            configService.get<string>('DB_SYNCHRONIZE', 'true') === 'true',
         };
       },
     }),

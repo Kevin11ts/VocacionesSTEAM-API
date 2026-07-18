@@ -124,7 +124,9 @@ export class UsersGatewayController {
   }
 
   @Put('settings')
-  @ApiOperation({ summary: 'Update user settings (theme, language, notifications)' })
+  @ApiOperation({
+    summary: 'Update user settings (theme, language, notifications)',
+  })
   @ApiBody({ type: UpdateUserSettingsDto })
   async updateSettings(
     @CurrentUser() user: any,
@@ -226,6 +228,15 @@ export class UsersGatewayController {
 
   // --- ADMINISTRADOR CRUD ---
 
+  @Post()
+  @Roles('admin')
+  @ApiOperation({ summary: 'Crear un usuario administrado (Admin)' })
+  async createManaged(@Body() data: any) {
+    return lastValueFrom(
+      this.usersClient.send({ cmd: 'users.create-managed' }, data),
+    );
+  }
+
   @Get()
   @Roles('admin')
   @ApiOperation({ summary: 'Obtener todos los usuarios (Admin)' })
@@ -253,13 +264,20 @@ export class UsersGatewayController {
         firstName: 'John',
         lastName: 'Doe',
         role: 'user',
-        isActive: true
-      }
-    }
+        isActive: true,
+      },
+    },
   })
-  async update(@Param('id') id: string, @Body() data: any) {
+  async update(
+    @CurrentUser() actor: any,
+    @Param('id') id: string,
+    @Body() data: any,
+  ) {
     return lastValueFrom(
-      this.usersClient.send({ cmd: 'users.update' }, { id, data }),
+      this.usersClient.send(
+        { cmd: 'users.update' },
+        { id, data, actorId: actor.id },
+      ),
     );
   }
 
@@ -267,8 +285,10 @@ export class UsersGatewayController {
   @Roles('admin')
   @ApiOperation({ summary: 'Eliminar un usuario (Admin)' })
   @ApiParam({ name: 'id', description: 'ID del usuario' })
-  async remove(@Param('id') id: string) {
-    return lastValueFrom(this.usersClient.send({ cmd: 'users.remove' }, id));
+  async remove(@CurrentUser() actor: any, @Param('id') id: string) {
+    return lastValueFrom(
+      this.usersClient.send({ cmd: 'users.remove' }, { id, actorId: actor.id }),
+    );
   }
 
   @Patch(':id/suspension')
@@ -296,10 +316,7 @@ export class UsersGatewayController {
     },
   ) {
     return lastValueFrom(
-      this.usersClient.send(
-        { cmd: 'users.set-suspension' },
-        { id, ...body },
-      ),
+      this.usersClient.send({ cmd: 'users.set-suspension' }, { id, ...body }),
     );
   }
 }

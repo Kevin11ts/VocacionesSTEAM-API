@@ -135,6 +135,9 @@ export class AiService {
         detectedProfile: log.detectedProfile,
         latency: `${Math.round(log.latency)}ms`,
         status: log.success ? 'Éxito' : 'Error',
+        provider: log.provider,
+        tokensConsumed: log.tokensConsumed,
+        errorMessage: log.errorMessage || null,
       })),
     };
   }

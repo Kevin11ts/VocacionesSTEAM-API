@@ -10,6 +10,7 @@ import {
   SavedCourse,
 } from '@app/common';
 import { RpcException } from '@nestjs/microservices';
+import * as bcrypt from 'bcrypt';
 
 @Injectable()
 export class UsersService {
@@ -58,26 +59,106 @@ export class UsersService {
     return safeUser;
   }
 
-  async update(id: string, updateData: Partial<User>) {
-    const user = await this.userRepository.findOne({ where: { id } });
-    if (!user) throw new RpcException('Usuario no encontrado');
-
-    // Ignorar actualización de password directa por seguridad.
-    if (updateData.password) {
-      delete updateData.password;
+  async createManagedUser(data: {
+    email: string;
+    fullname: string;
+    password: string;
+    role?: string;
+    title?: string;
+    isEmailVerified?: boolean;
+  }) {
+    const email = String(data.email || '')
+      .trim()
+      .toLowerCase();
+    const fullname = String(data.fullname || '').trim();
+    if (!email || !fullname || String(data.password || '').length < 8) {
+      throw new RpcException(
+        'Nombre, correo y una contraseña temporal de al menos 8 caracteres son obligatorios.',
+      );
     }
-
-    Object.assign(user, updateData);
-    const updatedUser = await this.userRepository.save(user);
-    const { password, ...safeUser } = updatedUser;
+    const existing = await this.userRepository.findOne({ where: { email } });
+    if (existing)
+      throw new RpcException('El correo electrónico ya está en uso');
+    const role = data.role === 'admin' ? 'admin' : 'student';
+    const user = this.userRepository.create({
+      email,
+      fullname,
+      password: await bcrypt.hash(data.password, 10),
+      role,
+      title: String(data.title || '').trim() || 'Explorador STEAM',
+      isEmailVerified: Boolean(data.isEmailVerified),
+      settings: new UserSettings(),
+    });
+    const saved = await this.userRepository.save(user);
+    const { password, hashedRefreshToken, ...safeUser } = saved;
     return safeUser;
   }
 
-  async remove(id: string) {
+  async update(id: string, updateData: Partial<User>, actorId?: string) {
     const user = await this.userRepository.findOne({ where: { id } });
     if (!user) throw new RpcException('Usuario no encontrado');
+
+    const clean: Partial<User> = {};
+    if (updateData.fullname !== undefined) {
+      clean.fullname = String(updateData.fullname).trim();
+      if (!clean.fullname)
+        throw new RpcException('El nombre no puede quedar vacío.');
+    }
+    if (updateData.email !== undefined) {
+      const email = String(updateData.email).trim().toLowerCase();
+      const duplicate = await this.userRepository.findOne({ where: { email } });
+      if (duplicate && duplicate.id !== id) {
+        throw new RpcException('El correo electrónico ya está en uso');
+      }
+      clean.email = email;
+    }
+    if (updateData.title !== undefined) {
+      clean.title = String(updateData.title).trim() || 'Explorador STEAM';
+    }
+    if (updateData.isEmailVerified !== undefined) {
+      clean.isEmailVerified = Boolean(updateData.isEmailVerified);
+    }
+    if (updateData.role !== undefined) {
+      const nextRole = updateData.role === 'admin' ? 'admin' : 'student';
+      if (user.role === 'admin' && nextRole !== 'admin') {
+        if (actorId === id) {
+          throw new RpcException(
+            'No puedes quitarte tu propio acceso de administrador.',
+          );
+        }
+        await this.assertNotLastAdmin();
+      }
+      clean.role = nextRole;
+    }
+
+    Object.assign(user, clean);
+    const updatedUser = await this.userRepository.save(user);
+    const { password, hashedRefreshToken, ...safeUser } = updatedUser;
+    return safeUser;
+  }
+
+  async remove(id: string, actorId?: string) {
+    const user = await this.userRepository.findOne({ where: { id } });
+    if (!user) throw new RpcException('Usuario no encontrado');
+    if (actorId === id) {
+      throw new RpcException(
+        'No puedes eliminar tu propia cuenta administrativa.',
+      );
+    }
+    if (user.role === 'admin') await this.assertNotLastAdmin();
     await this.userRepository.remove(user);
     return { message: 'Usuario eliminado correctamente' };
+  }
+
+  private async assertNotLastAdmin(): Promise<void> {
+    const adminCount = await this.userRepository.count({
+      where: { role: 'admin' },
+    });
+    if (adminCount <= 1) {
+      throw new RpcException(
+        'Debe permanecer al menos un administrador activo.',
+      );
+    }
   }
 
   /**
@@ -93,7 +174,9 @@ export class UsersService {
     durationDays?: number;
     reason?: string;
   }) {
-    const user = await this.userRepository.findOne({ where: { id: payload.id } });
+    const user = await this.userRepository.findOne({
+      where: { id: payload.id },
+    });
     if (!user) throw new RpcException('Usuario no encontrado');
 
     if (user.role === 'admin' && payload.action !== 'reactivate') {
@@ -167,8 +250,7 @@ export class UsersService {
     for (const key of allowed) {
       const value = data[key];
       if (value !== undefined) {
-        (user as any)[key] =
-          typeof value === 'string' ? value.trim() : value;
+        (user as any)[key] = typeof value === 'string' ? value.trim() : value;
       }
     }
 

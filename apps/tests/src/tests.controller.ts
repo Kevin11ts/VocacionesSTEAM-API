@@ -10,6 +10,7 @@ import { CatalogService } from './profile/catalog.service';
 import { ProfileService } from './profile/profile.service';
 import { CalibrationDeckService } from './calibration-deck.service';
 import { MotorVocacionalService } from './motor/motor-vocacional.service';
+import { SystemAdminService } from './system-admin.service';
 import { CalibrationDeck } from '@app/common';
 
 @Controller()
@@ -20,6 +21,7 @@ export class TestsController {
     private readonly profileService: ProfileService,
     private readonly calibrationDeckService: CalibrationDeckService,
     private readonly motorVocacionalService: MotorVocacionalService,
+    private readonly systemAdminService: SystemAdminService,
   ) {}
 
   // --- Motor Vocacional API remoto (A0-A8, obra independiente) ---
@@ -103,6 +105,11 @@ export class TestsController {
 
   @MessagePattern({ cmd: 'tests.get-questions' })
   async getQuestions() {
+    return this.testsService.getActiveQuestions();
+  }
+
+  @MessagePattern({ cmd: 'tests.admin-get-questions' })
+  async getAdminQuestions() {
     return this.testsService.getQuestions();
   }
 
@@ -181,6 +188,11 @@ export class TestsController {
     return this.testsService.getSimulators();
   }
 
+  @MessagePattern({ cmd: 'tests.admin-get-simulators' })
+  async getAdminSimulators() {
+    return this.testsService.getAdminSimulators();
+  }
+
   @MessagePattern({ cmd: 'tests.get-simulator-by-slug' })
   async getSimulatorBySlug(@Payload() payload: { slug: string }) {
     return this.testsService.getSimulatorBySlug(payload.slug);
@@ -245,6 +257,21 @@ export class TestsController {
     return this.testsService.getAdminStats();
   }
 
+  @MessagePattern({ cmd: 'tests.admin-system-overview' })
+  async getAdminSystemOverview() {
+    return this.systemAdminService.getOverview();
+  }
+
+  @MessagePattern({ cmd: 'tests.admin-clear-cache' })
+  async clearAdminOperationalCache() {
+    return this.systemAdminService.clearOperationalCache();
+  }
+
+  @MessagePattern({ cmd: 'tests.admin-cleanup-orphan-options' })
+  async cleanupAdminOrphanOptions() {
+    return this.systemAdminService.cleanupOrphanOptions();
+  }
+
   // --- Decks de calibración (swipe) ---
   @MessagePattern({ cmd: 'calibration.decks-active' })
   async getActiveDecks() {
@@ -267,7 +294,9 @@ export class TestsController {
   }
 
   @MessagePattern({ cmd: 'calibration.deck-update' })
-  async updateDeck(@Payload() payload: { id: string; data: Partial<CalibrationDeck> }) {
+  async updateDeck(
+    @Payload() payload: { id: string; data: Partial<CalibrationDeck> },
+  ) {
     return this.calibrationDeckService.updateDeck(payload.id, payload.data);
   }
 

@@ -5,6 +5,7 @@ import { CatalogService } from './profile/catalog.service';
 import { ProfileService } from './profile/profile.service';
 import { CalibrationDeckService } from './calibration-deck.service';
 import { MotorVocacionalService } from './motor/motor-vocacional.service';
+import { SystemAdminService } from './system-admin.service';
 import {
   AlgorithmRun,
   CommonModule,
@@ -59,6 +60,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
     ProfileService,
     CalibrationDeckService,
     MotorVocacionalService,
+    SystemAdminService,
   ],
 })
 export class TestsModule {}

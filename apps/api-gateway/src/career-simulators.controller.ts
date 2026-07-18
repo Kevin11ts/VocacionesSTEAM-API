@@ -30,7 +30,10 @@ export class CareerSimulatorsController {
   ) {}
 
   @ApiOperation({ summary: 'Get simulator by slug (publicly cacheable)' })
-  @ApiResponse({ status: 200, description: 'Returns the simulator data without AI evaluation logic' })
+  @ApiResponse({
+    status: 200,
+    description: 'Returns the simulator data without AI evaluation logic',
+  })
   @Get(':slug')
   async getSimulatorBySlug(@Param('slug') slug: string) {
     return lastValueFrom(
@@ -46,12 +49,28 @@ export class CareerSimulatorsController {
       this.testsClient.send({ cmd: 'tests.get-simulators' }, {}),
     );
   }
+}
+
+@ApiTags('Admin Career Simulators')
+@ApiBearerAuth()
+@Controller('admin/career-simulators')
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles('admin')
+export class AdminCareerSimulatorsController {
+  constructor(
+    @Inject('TESTS_SERVICE') private readonly testsClient: ClientProxy,
+  ) {}
+
+  @Get()
+  @ApiOperation({ summary: 'Get all complete career simulators (Admin only)' })
+  async getSimulators() {
+    return lastValueFrom(
+      this.testsClient.send({ cmd: 'tests.admin-get-simulators' }, {}),
+    );
+  }
 
   @ApiOperation({ summary: 'Create a new career simulator (Admin only)' })
   @ApiResponse({ status: 201, description: 'Simulator created successfully' })
-  @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles('admin')
   @ApiBody({
     schema: {
       example: {
@@ -63,7 +82,8 @@ export class CareerSimulatorsController {
         status: 'activo',
         colorToken: 'primary',
         icon: 'code',
-        shortDescription: 'Experience a day in the life of a software engineer.',
+        shortDescription:
+          'Experience a day in the life of a software engineer.',
         tags: ['coding', 'problem-solving', 'technology'],
         steps: [
           {
@@ -72,16 +92,16 @@ export class CareerSimulatorsController {
             question: 'What language will you use?',
             options: [
               { id: 'opt_1', text: 'Python', nextStepId: 'step_2' },
-              { id: 'opt_2', text: 'JavaScript', nextStepId: 'step_2' }
-            ]
-          }
+              { id: 'opt_2', text: 'JavaScript', nextStepId: 'step_2' },
+            ],
+          },
         ],
         completionConfig: {
           badge: 'Junior Developer',
-          score: 100
-        }
-      }
-    }
+          score: 100,
+        },
+      },
+    },
   })
   @Post()
   async createSimulator(@Body() data: any) {
@@ -92,17 +112,14 @@ export class CareerSimulatorsController {
 
   @ApiOperation({ summary: 'Update an existing career simulator (Admin only)' })
   @ApiResponse({ status: 200, description: 'Simulator updated successfully' })
-  @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles('admin')
   @ApiBody({
     schema: {
       example: {
         careerName: 'Software Engineering Updated',
         estimatedDurationMinutes: 20,
-        status: 'inactivo'
-      }
-    }
+        status: 'inactivo',
+      },
+    },
   })
   @Put(':id')
   async updateSimulator(@Param('id') id: string, @Body() data: any) {
@@ -113,9 +130,6 @@ export class CareerSimulatorsController {
 
   @ApiOperation({ summary: 'Delete a career simulator (Admin only)' })
   @ApiResponse({ status: 200, description: 'Simulator deleted successfully' })
-  @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles('admin')
   @Delete(':id')
   async deleteSimulator(@Param('id') id: string) {
     return lastValueFrom(

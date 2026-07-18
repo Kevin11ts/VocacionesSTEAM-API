@@ -20,6 +20,8 @@ import { lastValueFrom } from 'rxjs';
 import { ComputeProfileDto } from '@app/common';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { CurrentUser } from './decorators/current-user.decorator';
+import { RolesGuard } from './guards/roles.guard';
+import { Roles } from './decorators/roles.decorator';
 
 /**
  * Puente hacia el Motor Vocacional API: el servicio externo (obra
@@ -75,6 +77,8 @@ export class MotorGatewayController {
   }
 
   @Get('metrics')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('admin')
   @ApiOperation({
     summary:
       'Métricas de análisis agregadas por algoritmo (ejecuciones, avg/min/max ms, última corrida)',

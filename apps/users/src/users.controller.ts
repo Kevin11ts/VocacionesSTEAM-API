@@ -20,16 +20,12 @@ export class UsersController {
   }
 
   @MessagePattern({ cmd: 'users.update-own-profile' })
-  async updateOwnProfile(
-    @Payload() payload: { userId: string; data: any },
-  ) {
+  async updateOwnProfile(@Payload() payload: { userId: string; data: any }) {
     return this.usersService.updateOwnProfile(payload.userId, payload.data);
   }
 
   @MessagePattern({ cmd: 'users.accept-terms' })
-  async acceptTerms(
-    @Payload() payload: { userId: string; version: string },
-  ) {
+  async acceptTerms(@Payload() payload: { userId: string; version: string }) {
     return this.usersService.acceptTerms(payload.userId, payload.version);
   }
 
@@ -86,6 +82,11 @@ export class UsersController {
 
   // --- ADMINISTRADOR CRUD ---
 
+  @MessagePattern({ cmd: 'users.create-managed' })
+  async createManaged(@Payload() data: any) {
+    return this.usersService.createManagedUser(data);
+  }
+
   @MessagePattern({ cmd: 'users.find-all' })
   async findAll() {
     return this.usersService.findAll();
@@ -97,13 +98,15 @@ export class UsersController {
   }
 
   @MessagePattern({ cmd: 'users.update' })
-  async update(@Payload() payload: { id: string; data: any }) {
-    return this.usersService.update(payload.id, payload.data);
+  async update(
+    @Payload() payload: { id: string; data: any; actorId?: string },
+  ) {
+    return this.usersService.update(payload.id, payload.data, payload.actorId);
   }
 
   @MessagePattern({ cmd: 'users.remove' })
-  async remove(@Payload() id: string) {
-    return this.usersService.remove(id);
+  async remove(@Payload() payload: { id: string; actorId?: string }) {
+    return this.usersService.remove(payload.id, payload.actorId);
   }
 
   @MessagePattern({ cmd: 'users.set-suspension' })
