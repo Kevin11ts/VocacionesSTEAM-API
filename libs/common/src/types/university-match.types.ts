@@ -1,7 +1,7 @@
 /**
  * Contrato del algoritmo A8 — Matching de universidades (IA + datos duros).
  * Arquitectura de 2 capas: la capa determinista calcula match duro,
- * distancia, costo y baseScore; la IA solo rankea fino (±10) y explica.
+ * distancia, costo y baseScore; la IA rankea fino (±15) y explica.
  */
 import { SteamAxis } from './vocational-profile.types';
 
@@ -48,7 +48,7 @@ export interface UniversityCandidate {
   websiteUrl?: string;
   address?: string;
   /** Oferta educativa completa (no solo la carrera que hizo match duro). */
-  steamPrograms?: { name: string; area: string }[];
+  steamPrograms?: { name: string; area: string; sourceUrl?: string }[];
   /** Coordenadas de la universidad (para el mapa del frontend). */
   location?: { lat: number; lng: number };
 }
@@ -77,17 +77,21 @@ export interface UniversityMatch {
   /** Fecha/periodo de examen de admisión, ficha o convocatoria (solo si el sitio lo menciona explícitamente). */
   admissionDates?: string;
   /** Oferta educativa completa (no solo matchedCareer). */
-  steamPrograms?: { name: string; area: string }[];
+  steamPrograms?: { name: string; area: string; sourceUrl?: string }[];
   googleMapsData?: { rating?: number; address?: string };
   /** Coordenadas de la universidad (para el mapa del frontend). */
   location?: { lat: number; lng: number };
-  /** Justificación del ajuste de la IA sobre el baseScore (±10 máx). */
+  /** Justificación del ajuste de la IA sobre el baseScore (±15 máx). */
   scoreAdjustmentReason?: string;
 }
 
 export interface UniversityMatchResponse {
   matches: UniversityMatch[];
   generatedAt: string;
+  /** Cuántas coincidencias recibieron análisis individual de la IA. */
+  aiAnalyzedCount?: number;
+  /** Total de candidatas reales visibles después de aplicar filtros. */
+  candidateCount?: number;
   /**
    * Origen del ranking fino: 'Groq' cuando la IA explicó los matches, o
    * 'deterministic' si se degradó a baseScore puro (IA caída o sin API key).

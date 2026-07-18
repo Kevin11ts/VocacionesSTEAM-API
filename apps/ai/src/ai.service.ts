@@ -1,15 +1,19 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, Not, IsNull } from 'typeorm';
+import { Repository } from 'typeorm';
 import Groq from 'groq-sdk';
 import { AiLog, University } from '@app/common';
 import { haversineKm } from './university-match.engine';
 import {
   DISCARDED_INSTITUTION_TYPES,
   isExcludedInstitutionName,
-  isGenericProgramName,
 } from './institution-filter';
+import {
+  OfficialSitePage,
+  recommendationPrograms,
+  verifyProgramsAgainstOfficialPages,
+} from './program-verification';
 
 /**
  * Servicio del microservicio de IA.
@@ -118,6 +122,9 @@ export class AiService {
       )
       .map((u) => ({
         ...u,
+        // Nunca se expone ni usa en A8 un catálogo automático antiguo que
+        // no tenga evidencia oficial o curación explícita del administrador.
+        steamPrograms: recommendationPrograms(u),
         distanceKm: haversineKm(
           { lat, lng },
           { lat: u.location.latitude, lng: u.location.longitude },
@@ -138,12 +145,13 @@ export class AiService {
   /**
    * Presupuesto de trabajos con IA por request síncrono (existentes a
    * enriquecer + nuevos a validar). Se procesan en chunks paralelos de
-   * ENRICH_CHUNK_SIZE: 12 trabajos ≈ 3 oleadas × ~10-15s ≈ 30-45s en el
+   * ENRICH_CHUNK_SIZE: 12 trabajos ≈ 4 oleadas × ~10-12s. Cada prompt se
+   * mantiene corto para respetar también límites por tokens del proveedor.
    * peor caso — dentro del timeout del proxy de Railway, y respetando el
    * rate limit de Groq (no 12 llamadas simultáneas).
    */
   private static readonly MAX_SYNC_ENRICH = 12;
-  private static readonly ENRICH_CHUNK_SIZE = 4;
+  private static readonly ENRICH_CHUNK_SIZE = 3;
 
   /**
    * "Cerca de ti" (Explorar) y el mapa: BD propia como fuente principal; si
@@ -175,14 +183,17 @@ export class AiService {
     const dbNearby = await this.getNearbyUniversities(lat, lng, radiusKm);
 
     // Dos gates independientes: "cuántas hay" (activa descubrir nuevas en
-    // Places) y "cuántas SIRVEN" — tienen steamPrograms, o sea activan A8 y
-    // muestran ficha completa (activa enriquecer existentes). Antes había un
+    // Places) y "cuántas SIRVEN" — tienen programas verificados, o sea
+    // activan A8 y muestran ficha completa (activa enriquecer existentes).
+    // Antes había un
     // solo gate por cantidad total: en zonas densas (CDMX) ya hay >15
     // registros crudos desde el primer request, así que la función
     // retornaba de inmediato y el enriquecimiento NUNCA se disparaba —
     // aunque casi ninguno tuviera programas. Ver findOrDiscoverNearby en el
     // plan de corrección para el detalle del bug.
-    const withPrograms = dbNearby.filter((u) => u.steamPrograms?.length).length;
+    const withPrograms = dbNearby.filter(
+      (u) => recommendationPrograms(u).length,
+    ).length;
     const needsMoreCoverage = dbNearby.length < AiService.MIN_ZONE_COVERAGE;
     const needsEnrichment = withPrograms < AiService.MIN_ZONE_COVERAGE;
     if (!needsMoreCoverage && !needsEnrichment) return dbNearby;
@@ -190,11 +201,11 @@ export class AiService {
     const apiKey = this.configService.get<string>('GOOGLE_PLACES_API_KEY');
     let budget = AiService.MAX_SYNC_ENRICH;
 
-    // ── 1) Existentes de la zona sin programas: enriquecerlas primero ─────
+    // ── 1) Existentes sin oferta verificada: enriquecerlas primero ─────────
     // Son las más baratas (sin Place Details si ya tienen website), son las
     // que el alumno ya está viendo "vacías", y son las que activan A8.
-    // Nunca-intentadas primero (aiEnrichedAt null); las ya intentadas (sitio
-    // caído, etc.) solo se reintentan si sobra presupuesto.
+    // Los catálogos automáticos heredados también entran: tener carreras
+    // guardadas ya no equivale a que sean reales para esa institución/sede.
     //
     // OJO: no se exige tener ya `website` o `googlePlaceId` — la inmensa
     // mayoría de la BD viene de descubrimientos viejos (botón admin de
@@ -206,8 +217,21 @@ export class AiService {
     // ti") y que haya API key para poder buscar en Places.
     if (needsEnrichment && this.groq && budget > 0) {
       const toEnrich = dbNearby
-        .filter((u) => !u.steamPrograms?.length && (u.website?.trim() || apiKey))
-        .sort((a, b) => (a.aiEnrichedAt ? 1 : 0) - (b.aiEnrichedAt ? 1 : 0))
+        .filter(
+          (u) =>
+            !u.programsVerifiedAt &&
+            !u.programsVerificationSource &&
+            !(u.source === 'manual' && u.steamPrograms?.length) &&
+            (u.website?.trim() || apiKey),
+        )
+        // No repetir eternamente el mismo primer lote: nunca verificadas
+        // primero y después el intento más antiguo (updatedAt rota al guardar).
+        .sort((a, b) => {
+          const aUnverified = a.programsVerifiedAt ? 1 : 0;
+          const bUnverified = b.programsVerifiedAt ? 1 : 0;
+          if (aUnverified !== bUnverified) return aUnverified - bUnverified;
+          return a.updatedAt.getTime() - b.updatedAt.getTime();
+        })
         .slice(0, budget);
       budget -= toEnrich.length;
 
@@ -227,14 +251,18 @@ export class AiService {
   }
 
   /** Corre `worker` sobre `items` en tandas paralelas de tamaño `size` (los errores ya los maneja cada worker). */
-  private async runInChunks<T>(
+  private async runInChunks<T, R>(
     items: T[],
     size: number,
-    worker: (item: T) => Promise<unknown>,
-  ): Promise<void> {
+    worker: (item: T) => Promise<R>,
+  ): Promise<PromiseSettledResult<R>[]> {
+    const results: PromiseSettledResult<R>[] = [];
     for (let i = 0; i < items.length; i += size) {
-      await Promise.allSettled(items.slice(i, i + size).map(worker));
+      results.push(
+        ...(await Promise.allSettled(items.slice(i, i + size).map(worker))),
+      );
     }
+    return results;
   }
 
   /**
@@ -250,72 +278,121 @@ export class AiService {
     apiKey?: string,
   ): Promise<void> {
     try {
-      let website: string | undefined = uni.website?.trim() || undefined;
-      if (!website && !uni.googlePlaceId && apiKey && uni.location) {
-        // Registro viejo (descubrimiento admin/DENUE) sin place_id guardado:
-        // se resuelve buscándolo por nombre+dirección antes de poder pedir
-        // su website vía Place Details.
-        try {
-          const placeId = await this.findPlaceId(apiKey, uni.name, uni.address, uni.location);
-          if (placeId) uni.googlePlaceId = placeId;
-        } catch (err) {
-          this.logger.warn(`findPlaceId falló para "${uni.name}": ${err.message || err}`);
-        }
-      }
-      if (!website && uni.googlePlaceId && apiKey) {
-        website = await this.fetchPlaceWebsite(apiKey, uni.googlePlaceId);
-        if (website) uni.website = website;
-      }
-      if (!website) {
-        // Sin sitio no hay de dónde extraer: se marca el intento y ya.
-        uni.aiEnrichedAt = new Date();
-        await this.universityRepository.save(uni);
-        return;
-      }
-
-      const url = website.startsWith('http') ? website : `http://${website}`;
-      const siteText = await this.fetchSiteText(url);
-      const prompt = this.buildEnrichPrompt(uni.name, siteText);
-      const raw = await this.withTimeout(
-        this.callGroqEnrich(prompt),
-        this.ENRICH_GROQ_TIMEOUT_MS,
-        'Groq (enriquecimiento de zona)',
-      );
-      const cleaned = raw.replace(/```json|```/g, '').trim();
-      const parsed = JSON.parse(cleaned);
-
-      if (!uni.steamPrograms?.length && Array.isArray(parsed.steamPrograms) && parsed.steamPrograms.length) {
-        const validAreas = new Set(['ciencia', 'tecnologia', 'ingenieria', 'artes', 'matematicas']);
-        const validPrograms = parsed.steamPrograms.filter(
-          (p: any) => p?.name && validAreas.has(p?.area) && !isGenericProgramName(p.name),
-        );
-        if (validPrograms.length) uni.steamPrograms = validPrograms;
-      }
-      if (!uni.costTier && ['public', 'affordable', 'private-premium'].includes(parsed.costTier)) {
-        uni.costTier = parsed.costTier;
-      }
-      if (!uni.tuitionRange && typeof parsed.tuitionRange === 'string' && parsed.tuitionRange.trim()) {
-        uni.tuitionRange = parsed.tuitionRange.trim();
-      }
-      if (!uni.modality && typeof parsed.modality === 'string' && parsed.modality.trim()) {
-        uni.modality = parsed.modality.trim();
-      }
-      if (!uni.admissionDates && typeof parsed.admissionDates === 'string' && parsed.admissionDates.trim()) {
-        uni.admissionDates = parsed.admissionDates.trim();
-      }
-      uni.aiEnrichedAt = new Date();
-      uni.aiEnrichmentSource = url;
-      await this.universityRepository.save(uni);
+      await this.enrichUniversityFromOfficialSite(uni, apiKey);
     } catch (err) {
       this.logger.warn(
         `Enriquecimiento de zona falló para "${uni.name}": ${err.message || err}`,
       );
+      await this.markEnrichmentFailure(uni, err);
+    }
+  }
+
+  /**
+   * Única ruta de enriquecimiento para el flujo del alumno y el panel admin.
+   * La oferta automática se REEMPLAZA por el conjunto que tenga evidencia
+   * literal en las páginas oficiales; así también se limpian datos falsos de
+   * corridas anteriores. Un catálogo curado por admin nunca se sobreescribe.
+   */
+  private async enrichUniversityFromOfficialSite(
+    uni: University,
+    apiKey?: string,
+  ): Promise<{ changed: boolean; verifiedPrograms: number }> {
+    let website: string | undefined = uni.website?.trim() || undefined;
+    if (!website && !uni.googlePlaceId && apiKey && uni.location) {
       try {
-        uni.aiEnrichedAt = new Date();
-        await this.universityRepository.save(uni);
-      } catch {
-        /* si ni el intento se puede registrar, nada que hacer */
+        const placeId = await this.findPlaceId(
+          apiKey,
+          uni.name,
+          uni.address,
+          uni.location,
+        );
+        if (placeId) uni.googlePlaceId = placeId;
+      } catch (err) {
+        this.logger.warn(`findPlaceId falló para "${uni.name}": ${err.message || err}`);
       }
+    }
+    if (!website && uni.googlePlaceId && apiKey) {
+      website = await this.fetchPlaceWebsite(apiKey, uni.googlePlaceId);
+      if (website) uni.website = website;
+    }
+    if (!website) throw new Error('No se encontró un sitio oficial para verificar la oferta');
+
+    const url = website.startsWith('http') ? website : `http://${website}`;
+    const pages = await this.fetchSitePages(url);
+    const prompt = this.buildEnrichPrompt(
+      uni.name,
+      this.formatOfficialPagesForPrompt(pages),
+    );
+    const raw = await this.withTimeout(
+      this.callGroqEnrich(prompt),
+      this.ENRICH_GROQ_TIMEOUT_MS,
+      'Groq (enriquecimiento de universidad)',
+    );
+    const parsed = JSON.parse(raw.replace(/```json|```/g, '').trim());
+    const verifiedPrograms = verifyProgramsAgainstOfficialPages(
+      Array.isArray(parsed.steamPrograms) ? parsed.steamPrograms : [],
+      pages,
+      uni.name,
+    );
+
+    let changed = false;
+    // La oferta curada a mano tiene precedencia. Cualquier catálogo generado
+    // o legado sí se sustituye incluso por []: sin evidencia no se muestra.
+    const hasCuratedAdminCatalog =
+      !!uni.steamPrograms?.length &&
+      (uni.programsVerificationSource === 'admin' || uni.source === 'manual');
+    if (!hasCuratedAdminCatalog) {
+      const previous = JSON.stringify(uni.steamPrograms || []);
+      uni.steamPrograms = verifiedPrograms;
+      uni.programsVerifiedAt = new Date();
+      uni.programsVerificationSource =
+        verifiedPrograms[0]?.sourceUrl || pages[0]?.url || url;
+      changed = previous !== JSON.stringify(verifiedPrograms);
+    } else if (!uni.programsVerifiedAt || uni.programsVerificationSource !== 'admin') {
+      uni.programsVerifiedAt = uni.programsVerifiedAt || new Date();
+      uni.programsVerificationSource = 'admin';
+      changed = true;
+    }
+
+    if (!uni.costTier && ['public', 'affordable', 'private-premium'].includes(parsed.costTier)) {
+      uni.costTier = parsed.costTier;
+      changed = true;
+    }
+    if (!uni.tuitionRange && typeof parsed.tuitionRange === 'string' && parsed.tuitionRange.trim()) {
+      uni.tuitionRange = parsed.tuitionRange.trim();
+      changed = true;
+    }
+    if (!uni.modality && typeof parsed.modality === 'string' && parsed.modality.trim()) {
+      uni.modality = parsed.modality.trim();
+      changed = true;
+    }
+    if (!uni.admissionDates && typeof parsed.admissionDates === 'string' && parsed.admissionDates.trim()) {
+      uni.admissionDates = parsed.admissionDates.trim();
+      changed = true;
+    }
+
+    uni.aiEnrichedAt = new Date();
+    uni.aiEnrichmentSource = url;
+    const usableProgramCount = hasCuratedAdminCatalog
+      ? recommendationPrograms(uni).length
+      : verifiedPrograms.length;
+    uni.aiEnrichmentStatus = usableProgramCount ? 'complete' : 'partial';
+    uni.aiEnrichmentError = null;
+    await this.universityRepository.save(uni);
+    return { changed, verifiedPrograms: usableProgramCount };
+  }
+
+  private async markEnrichmentFailure(uni: University, error: unknown): Promise<void> {
+    try {
+      const message =
+        error instanceof Error ? error.message : String(error || 'Error desconocido');
+      uni.aiEnrichmentStatus = 'failed';
+      uni.aiEnrichmentError = message.slice(0, 1000);
+      // save() actualiza updatedAt; el orden por updatedAt hace que el
+      // siguiente request avance a otras universidades antes de reintentar.
+      await this.universityRepository.save(uni);
+    } catch {
+      /* si ni el diagnóstico se puede guardar, nada que hacer */
     }
   }
 
@@ -506,8 +583,11 @@ SALIDA (JSON estricto, sin texto extra):
 
     const url = website.startsWith('http') ? website : `http://${website}`;
     try {
-      const siteText = await this.fetchSiteText(url);
-      const prompt = this.buildDiscoveryPrompt(place.name, siteText);
+      const pages = await this.fetchSitePages(url);
+      const prompt = this.buildDiscoveryPrompt(
+        place.name,
+        this.formatOfficialPagesForPrompt(pages),
+      );
       const raw = await this.withTimeout(
         this.callGroqEnrich(prompt),
         this.ENRICH_GROQ_TIMEOUT_MS,
@@ -523,12 +603,11 @@ SALIDA (JSON estricto, sin texto extra):
         return null; // no es una institución de educación superior real: se descarta
       }
 
-      const validAreas = new Set(['ciencia', 'tecnologia', 'ingenieria', 'artes', 'matematicas']);
-      const steamPrograms = Array.isArray(parsed.steamPrograms)
-        ? parsed.steamPrograms.filter(
-            (p: any) => p?.name && validAreas.has(p?.area) && !isGenericProgramName(p.name),
-          )
-        : [];
+      const steamPrograms = verifyProgramsAgainstOfficialPages(
+        Array.isArray(parsed.steamPrograms) ? parsed.steamPrograms : [],
+        pages,
+        place.name,
+      );
 
       return {
         ...base,
@@ -550,14 +629,26 @@ SALIDA (JSON estricto, sin texto extra):
           typeof parsed.admissionDates === 'string' && parsed.admissionDates.trim()
             ? parsed.admissionDates.trim()
             : undefined,
+        programsVerifiedAt: new Date(),
+        programsVerificationSource:
+          steamPrograms[0]?.sourceUrl || pages[0]?.url || url,
         aiEnrichedAt: new Date(),
         aiEnrichmentSource: url,
+        aiEnrichmentStatus: steamPrograms.length ? 'complete' : 'partial',
+        aiEnrichmentError: null,
       };
     } catch (err) {
       this.logger.warn(`Descubrimiento con IA falló para "${place.name}": ${err.message || err}`);
       // No se pudo confirmar con IA (sitio caído/timeout): se guarda igual
       // como "unverified" en vez de perder el candidato para siempre.
-      return { ...base, website: url, institutionType: 'unverified' };
+      return {
+        ...base,
+        website: url,
+        institutionType: 'unverified',
+        aiEnrichmentStatus: 'failed',
+        aiEnrichmentError:
+          err instanceof Error ? err.message.slice(0, 1000) : String(err).slice(0, 1000),
+      };
     }
   }
 
@@ -579,7 +670,16 @@ SALIDA (JSON estricto, sin texto extra):
   }
 
   async createUniversity(data: Partial<University>): Promise<University> {
-    const university = this.universityRepository.create(data);
+    const university = this.universityRepository.create({
+      ...data,
+      source: data.source || 'manual',
+      ...(data.steamPrograms
+        ? {
+            programsVerifiedAt: new Date(),
+            programsVerificationSource: 'admin',
+          }
+        : {}),
+    });
     return this.universityRepository.save(university);
   }
 
@@ -587,7 +687,15 @@ SALIDA (JSON estricto, sin texto extra):
     id: string,
     data: Partial<University>,
   ): Promise<University | null> {
-    await this.universityRepository.update(id, data);
+    await this.universityRepository.update(id, {
+      ...data,
+      ...(data.steamPrograms !== undefined
+        ? {
+            programsVerifiedAt: new Date(),
+            programsVerificationSource: 'admin',
+          }
+        : {}),
+    });
     return this.universityRepository.findOne({ where: { id } });
   }
 
@@ -735,6 +843,12 @@ SALIDA (JSON estricto, sin texto extra):
           ...row,
           name,
           location: { latitude: lat, longitude: lng },
+          ...(row.steamPrograms?.length && !row.programsVerifiedAt
+            ? {
+                programsVerifiedAt: new Date(),
+                programsVerificationSource: 'admin',
+              }
+            : {}),
         });
         await this.universityRepository.save(university);
         created++;
@@ -798,7 +912,15 @@ SALIDA (JSON estricto, sin texto extra):
           continue;
         }
         const { id: _ignored, createdAt, updatedAt, ...fields } = row as any;
-        await this.universityRepository.update(id, fields);
+        await this.universityRepository.update(id, {
+          ...fields,
+          ...(row.steamPrograms !== undefined
+            ? {
+                programsVerifiedAt: new Date(),
+                programsVerificationSource: 'admin',
+              }
+            : {}),
+        });
         updated++;
       } catch (err) {
         errors.push({ index, name, error: err.message || String(err) });
@@ -1369,11 +1491,28 @@ SALIDA (JSON estricto, sin texto extra):
   private readonly ENRICH_SUBPAGE_TIMEOUT_MS = 5_000;
   private readonly ENRICH_GROQ_TIMEOUT_MS = 12_000;
 
+  private decodeHtmlEntities(value: string): string {
+    const named: Record<string, string> = {
+      nbsp: ' ', amp: '&', quot: '"', apos: "'", lt: '<', gt: '>',
+      aacute: 'á', eacute: 'é', iacute: 'í', oacute: 'ó', uacute: 'ú',
+      Aacute: 'Á', Eacute: 'É', Iacute: 'Í', Oacute: 'Ó', Uacute: 'Ú',
+      ntilde: 'ñ', Ntilde: 'Ñ', uuml: 'ü', Uuml: 'Ü',
+    };
+    return value
+      .replace(/&([A-Za-z]+);/g, (full, name: string) => named[name] ?? full)
+      .replace(/&#(\d+);/g, (_full, code: string) =>
+        String.fromCodePoint(Number(code)),
+      )
+      .replace(/&#x([0-9a-f]+);/gi, (_full, code: string) =>
+        String.fromCodePoint(parseInt(code, 16)),
+      );
+  }
+
   /** Descarga una página y devuelve su HTML crudo + el texto plano limpio. */
   private async fetchPage(
     url: string,
     timeoutMs: number,
-  ): Promise<{ html: string; text: string }> {
+  ): Promise<{ url: string; html: string; text: string }> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
@@ -1394,14 +1533,13 @@ SALIDA (JSON estricto, sin texto extra):
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const html = await res.text();
-      const text = html
+      const text = this.decodeHtmlEntities(html
         .replace(/<script[\s\S]*?<\/script>/gi, ' ')
         .replace(/<style[\s\S]*?<\/style>/gi, ' ')
         .replace(/<[^>]+>/g, ' ')
-        .replace(/&nbsp;/g, ' ')
         .replace(/\s+/g, ' ')
-        .trim();
-      return { html, text };
+        .trim());
+      return { url: res.url || url, html, text };
     } finally {
       clearTimeout(timer);
     }
@@ -1413,32 +1551,48 @@ SALIDA (JSON estricto, sin texto extra):
    * info que la portada casi nunca trae.
    */
   private extractCandidateLinks(html: string, baseUrl: string): string[] {
-    // Señal fuerte = página que casi seguro lista carreras/costos.
-    const STRONG = /licenciatura|oferta|carrera|colegiatura|costo/i;
-    const WEAK = /ingenier|programa|academic|admisi|estudia|inscripci/i;
+    // Primero índices completos de oferta/licenciaturas; después fichas de
+    // carreras y páginas de admisión/costos. Se revisa TODO el HTML: el límite
+    // anterior de 12 enlaces dejaba fuera la oferta STEAM cuando el menú
+    // listaba primero administración, derecho o humanidades.
+    const INDEX = /oferta[\s_/-]*(academica|educativa)|licenciaturas?|ingenierias?|carreras?|programas?[\s_/-]*(academicos|educativos)/i;
+    const DEGREE = /licenciatur|ingenier|arquitect|actuari|biolog|fisic|quimic|matematic|comput|software|sistemas|tecnolog|dise[nñ]|artes?|musica/i;
+    const INFO = /colegiatura|costo|admisi|inscripci|convocatoria/i;
+    const EXCLUDE = /maestr|doctor|posgrado|diplomado|curso|blog|noticia|wp-content|\.pdf(?:$|\?)/i;
     const found: { url: string; score: number }[] = [];
     const re = /<a\b[^>]*href=["']([^"'#]+)["'][^>]*>([\s\S]{0,200}?)<\/a>/gi;
     let m: RegExpExecArray | null;
-    while ((m = re.exec(html)) !== null && found.length < 12) {
+    while ((m = re.exec(html)) !== null) {
       const href = m[1];
-      const label = m[2].replace(/<[^>]+>/g, ' ');
+      const label = m[2].replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
       const sample = `${href} ${label}`;
-      const score = STRONG.test(sample) ? 2 : WEAK.test(sample) ? 1 : 0;
+      if (EXCLUDE.test(sample)) continue;
+      const score = INDEX.test(sample)
+        ? 12
+        : DEGREE.test(sample)
+          ? 8
+          : INFO.test(sample)
+            ? 3
+            : 0;
       if (!score) continue;
       try {
         const abs = new URL(href, baseUrl);
         if (!/^https?:$/.test(abs.protocol)) continue;
-        if (abs.hostname !== new URL(baseUrl).hostname) continue; // solo mismo dominio
+        const host = (value: string) => value.toLowerCase().replace(/^www\./, '');
+        if (host(abs.hostname) !== host(new URL(baseUrl).hostname)) continue;
+        abs.hash = '';
         const clean = abs.toString();
-        if (!found.some((f) => f.url === clean)) found.push({ url: clean, score });
+        const existing = found.find((f) => f.url === clean);
+        if (existing) existing.score = Math.max(existing.score, score);
+        else found.push({ url: clean, score });
       } catch {
         /* href inválido: se ignora */
       }
     }
-    // Orden estable: fuertes primero, conservando el orden de aparición.
+    // Seis subpáginas mantienen el request acotado y se descargan en paralelo.
     return found
       .sort((a, b) => b.score - a.score)
-      .slice(0, 2)
+      .slice(0, 6)
       .map((f) => f.url);
   }
 
@@ -1448,29 +1602,44 @@ SALIDA (JSON estricto, sin texto extra):
    * limitada a extraer SOLO de este texto — se amplía el terreno leído,
    * no el permiso de inventar.
    */
-  private async fetchSiteText(url: string): Promise<string> {
+  private async fetchSitePages(url: string): Promise<OfficialSitePage[]> {
     const home = await this.fetchPage(url, this.ENRICH_FETCH_TIMEOUT_MS);
     if (home.text.length < 50 && !home.html) {
       throw new Error('La página no devolvió contenido');
     }
-    let combined = home.text.slice(0, 6000);
+    const pages: OfficialSitePage[] = [
+      { url: home.url, text: home.text.slice(0, 20_000) },
+    ];
 
-    const subLinks = this.extractCandidateLinks(home.html, url);
+    const subLinks = this.extractCandidateLinks(home.html, home.url);
     if (subLinks.length) {
       const subs = await Promise.allSettled(
         subLinks.map((link) => this.fetchPage(link, this.ENRICH_SUBPAGE_TIMEOUT_MS)),
       );
-      subs.forEach((s, i) => {
+      subs.forEach((s) => {
         if (s.status === 'fulfilled' && s.value.text.length >= 50) {
-          combined += `\n\n[SUBPÁGINA ${subLinks[i]}]\n${s.value.text.slice(0, 3000)}`;
+          pages.push({ url: s.value.url, text: s.value.text.slice(0, 8_000) });
         }
       });
     }
 
-    if (combined.trim().length < 50) {
+    if (!pages.some((page) => page.text.trim().length >= 50)) {
       throw new Error('La página no devolvió suficiente texto (¿SPA sin contenido server-rendered?)');
     }
-    return combined;
+    return pages;
+  }
+
+  private formatOfficialPagesForPrompt(pages: OfficialSitePage[]): string {
+    return pages
+      .map((page, index) => {
+        // La evidencia completa permanece en `pages` para la validación
+        // literal posterior. Al modelo se le manda un extracto acotado para
+        // que tres universidades puedan procesarse en paralelo sin rebasar
+        // el límite de tokens por minuto de Groq.
+        const budget = index === 0 ? 5_000 : 800;
+        return `[FUENTE OFICIAL: ${page.url}]\n${page.text.slice(0, budget)}`;
+      })
+      .join('\n\n');
   }
 
   private withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
@@ -1504,6 +1673,12 @@ REGLAS ESTRICTAS:
    Ejemplo incorrecto: "Ciencias de la Salud" (NO es una carrera, es una
    división — si el texto solo menciona el nombre de la división sin listar
    las carreras específicas que contiene, omítela).
+   Copia el nombre LITERALMENTE como aparece en el texto y agrega "sourceUrl"
+   con la URL EXACTA de su encabezado [FUENTE OFICIAL: ...]. El servidor
+   descartará cualquier nombre que no pueda encontrar palabra por palabra en
+   esa fuente. Si UNIVERSIDAD menciona Campus, Plantel o Sede, incluye una
+   carrera únicamente cuando el texto también confirme que se imparte en esa
+   ubicación específica; no generalices la oferta de otros campus.
 3. "costTier": SOLO si el texto indica claramente que es pública/gratuita
    ("public"), de costo accesible ("affordable"), o privada de alto costo
    ("private-premium"). Si no es claro, null.
@@ -1522,7 +1697,7 @@ ${siteText}
 
 SALIDA (JSON estricto, sin texto extra):
 {
-  "steamPrograms": [{ "name": "string", "area": "ciencia|tecnologia|ingenieria|artes|matematicas" }],
+  "steamPrograms": [{ "name": "nombre literal", "area": "ciencia|tecnologia|ingenieria|artes|matematicas", "sourceUrl": "URL exacta de FUENTE OFICIAL" }],
   "costTier": "public" | "affordable" | "private-premium" | null,
   "tuitionRange": "string" | null,
   "modality": "string" | null,
@@ -1571,6 +1746,10 @@ duplicado), completa además:
    Ejemplo incorrecto: "Ciencias de la Salud" (NO es una carrera, es una
    división — si el texto solo menciona el nombre de la división sin listar
    las carreras específicas que contiene, omítela).
+   Copia el nombre LITERALMENTE como aparece en el texto y agrega "sourceUrl"
+   con la URL EXACTA de su encabezado [FUENTE OFICIAL: ...]. Si el NOMBRE
+   DETECTADO contiene Campus, Plantel o Sede, incluye solo carreras que el
+   texto confirme para esa ubicación; no mezcles la oferta de otros campus.
 2. "costTier": SOLO si el texto indica claramente que es pública/gratuita
    ("public"), de costo accesible ("affordable"), o privada de alto costo
    ("private-premium"). Si no es claro, null.
@@ -1591,7 +1770,7 @@ ${siteText}
 SALIDA (JSON estricto, sin texto extra):
 {
   "institutionType": "string",
-  "steamPrograms": [{ "name": "string", "area": "ciencia|tecnologia|ingenieria|artes|matematicas" }],
+  "steamPrograms": [{ "name": "nombre literal", "area": "ciencia|tecnologia|ingenieria|artes|matematicas", "sourceUrl": "URL exacta de FUENTE OFICIAL" }],
   "costTier": "public" | "affordable" | "private-premium" | null,
   "tuitionRange": "string" | null,
   "modality": "string" | null,
@@ -1606,27 +1785,25 @@ SALIDA (JSON estricto, sin texto extra):
       messages: [{ role: 'user', content: prompt }],
       temperature: 0.1,
       response_format: { type: 'json_object' },
-      max_tokens: 2000,
+      max_tokens: 3500,
     });
     return completion.choices[0]?.message?.content || '{}';
   }
 
   /**
    * Completa campos faltantes (steamPrograms/costTier/tuitionRange/modality)
-   * de universidades que ya tienen `website` guardado, leyendo su sitio real
-   * y extrayendo con Groq bajo un prompt anti-alucinación. NUNCA sobreescribe
-   * un campo que el admin ya haya llenado a mano — solo rellena huecos.
+   * leyendo su sitio real (o resolviéndolo primero con Places cuando falta)
+   * y extrayendo con Groq bajo verificación literal. La oferta automática se
+   * revalida y sustituye; la oferta curada por un admin nunca se sobreescribe.
    * Guarda `aiEnrichedAt`/`aiEnrichmentSource` como rastro de auditoría.
    */
-  // ~7-8s por universidad (fetch del sitio + Groq): con 15 el lote se acerca
-  // a los 2 minutos y arriesga que el proxy de Railway corte la conexión
-  // antes de responder (medido: 3 universidades tardaron 23s reales). Se
-  // baja a 5 (~35-40s) para que un clic siempre alcance a completar.
+  // Se procesan hasta 12 por clic en tandas concurrentes de 3. Así una zona
+  // avanza completa sin disparar todas las peticiones a Groq simultáneamente.
   //
   // `filter` (opcional): texto a buscar en nombre/dirección (sin acentos,
   // sin mayúsculas) para priorizar una zona — sin él, el orden por
   // createdAt haría imposible llegar a estados descubiertos al final.
-  async enrichUniversitiesWithAi(limit = 5, filter?: string): Promise<{
+  async enrichUniversitiesWithAi(limit = 12, filter?: string): Promise<{
     processed: number;
     enriched: number;
     skipped: number;
@@ -1642,96 +1819,68 @@ SALIDA (JSON estricto, sin texto extra):
     // hace lowercase de identificadores sin comillas — la columna real que
     // crea TypeORM sí preserva mayúsculas, así que esa condición nunca
     // encontraba nada (0 candidatos, 0 errores: fallaba en silencio). Se usa
-    // find() + operadores tipados, y el filtro de "campo faltante" en JS.
-    const withWebsite = await this.universityRepository.find({
-      where: { website: Not(IsNull()) },
+    // find() + operadores tipados, y los filtros en JS.
+    const universities = await this.universityRepository.find({
       order: { createdAt: 'ASC' },
     });
+    const googlePlacesKey = this.configService.get<string>(
+      'GOOGLE_PLACES_API_KEY',
+    );
     const wanted = filter ? this.normalizeName(filter) : '';
-    const candidates = withWebsite
+    const candidates = universities
       .filter(
         (u) =>
-          u.website?.trim() &&
-          (!u.steamPrograms?.length || !u.costTier || !u.tuitionRange || !u.modality) &&
+          (u.website?.trim() || (googlePlacesKey && u.location)) &&
+          (!u.programsVerifiedAt ||
+            !u.costTier ||
+            !u.tuitionRange ||
+            !u.modality ||
+            u.aiEnrichmentStatus === 'failed') &&
           (!wanted ||
             this.normalizeName(u.name).includes(wanted) ||
             this.normalizeName(u.address || '').includes(wanted)),
       )
-      // Nunca intentadas primero (sort estable: dentro de cada grupo se
-      // conserva el orden por createdAt); las ya intentadas —p. ej. con
-      // sitio muerto— se reintentan solo al agotarse las pendientes.
-      .sort((a, b) => (a.aiEnrichedAt ? 1 : 0) - (b.aiEnrichedAt ? 1 : 0))
-      .slice(0, limit);
+      .sort((a, b) => {
+        const aUnverified = a.programsVerifiedAt ? 1 : 0;
+        const bUnverified = b.programsVerifiedAt ? 1 : 0;
+        if (aUnverified !== bUnverified) return aUnverified - bUnverified;
+        return a.updatedAt.getTime() - b.updatedAt.getTime();
+      })
+      .slice(0, Math.max(1, Math.min(limit, 40)));
 
     let enriched = 0;
     let skipped = 0;
     const errors: { name: string; error: string }[] = [];
 
-    for (const uni of candidates) {
-      try {
-        const website = uni.website.startsWith('http') ? uni.website : `http://${uni.website}`;
-        const siteText = await this.fetchSiteText(website);
-        const prompt = this.buildEnrichPrompt(uni.name, siteText);
-        const raw = await this.withTimeout(
-          this.callGroqEnrich(prompt),
-          this.ENRICH_GROQ_TIMEOUT_MS,
-          'Groq (enriquecimiento)',
-        );
-        const cleaned = raw.replace(/```json|```/g, '').trim();
-        const parsed = JSON.parse(cleaned);
-
-        let changed = false;
-        if (!uni.steamPrograms?.length && Array.isArray(parsed.steamPrograms) && parsed.steamPrograms.length) {
-          const validAreas = new Set(['ciencia', 'tecnologia', 'ingenieria', 'artes', 'matematicas']);
-          const validPrograms = parsed.steamPrograms.filter(
-            (p: any) => p?.name && validAreas.has(p?.area) && !isGenericProgramName(p.name),
-          );
-          if (validPrograms.length) {
-            uni.steamPrograms = validPrograms;
-            changed = true;
-          }
-        }
-        if (!uni.costTier && ['public', 'affordable', 'private-premium'].includes(parsed.costTier)) {
-          uni.costTier = parsed.costTier;
-          changed = true;
-        }
-        if (!uni.tuitionRange && typeof parsed.tuitionRange === 'string' && parsed.tuitionRange.trim()) {
-          uni.tuitionRange = parsed.tuitionRange.trim();
-          changed = true;
-        }
-        if (!uni.modality && typeof parsed.modality === 'string' && parsed.modality.trim()) {
-          uni.modality = parsed.modality.trim();
-          changed = true;
-        }
-        if (!uni.admissionDates && typeof parsed.admissionDates === 'string' && parsed.admissionDates.trim()) {
-          uni.admissionDates = parsed.admissionDates.trim();
-          changed = true;
-        }
-
-        uni.aiEnrichedAt = new Date();
-        uni.aiEnrichmentSource = website;
-        await this.universityRepository.save(uni);
-
-        if (changed) {
-          enriched++;
-        } else {
-          skipped++;
-        }
-      } catch (err) {
-        this.logger.warn(`Enriquecimiento falló para "${uni.name}": ${err.message || err}`);
-        errors.push({ name: uni.name, error: err.message || String(err) });
-        // Registrar el intento también en fallo (sitio muerto/DNS caído es
-        // común en URLs del censo DENUE): sin esto, las mismas filas
-        // fallidas encabezan el lote en CADA clic y el avance se atasca.
-        // El orden "nunca intentadas primero" (abajo) las manda al final;
-        // se reintentan solo cuando ya no quedan pendientes nuevas.
+    const outcomes = await this.runInChunks(
+      candidates,
+      AiService.ENRICH_CHUNK_SIZE,
+      async (uni) => {
         try {
-          uni.aiEnrichedAt = new Date();
-          uni.aiEnrichmentSource = uni.website;
-          await this.universityRepository.save(uni);
-        } catch {
-          /* si ni siquiera se puede guardar el intento, no hay nada que hacer */
+          const result = await this.enrichUniversityFromOfficialSite(
+            uni,
+            googlePlacesKey,
+          );
+          return { uni, result };
+        } catch (err) {
+          this.logger.warn(`Enriquecimiento falló para "${uni.name}": ${err.message || err}`);
+          await this.markEnrichmentFailure(uni, err);
+          return { uni, error: err instanceof Error ? err.message : String(err) };
         }
+      },
+    );
+
+    for (const outcome of outcomes) {
+      if (outcome.status === 'rejected') {
+        errors.push({ name: 'Universidad desconocida', error: String(outcome.reason) });
+        continue;
+      }
+      if (outcome.value.error) {
+        errors.push({ name: outcome.value.uni.name, error: outcome.value.error });
+      } else if (outcome.value.result?.changed || outcome.value.result?.verifiedPrograms) {
+        enriched++;
+      } else {
+        skipped++;
       }
     }
 

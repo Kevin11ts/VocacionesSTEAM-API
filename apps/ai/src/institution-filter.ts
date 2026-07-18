@@ -128,6 +128,16 @@ const GENERIC_PROGRAM_NAMES = new Set([
   'ciencias exactas e ingenierias',
   'arte arquitectura y diseno',
   'tecnica',
+  'oferta academica',
+  'oferta educativa',
+  'programas academicos',
+  'programas educativos',
+  'licenciaturas',
+  'ingenierias',
+  'posgrados',
+  'admision',
+  'admisiones',
+  'vida estudiantil',
 ]);
 
 /** Prefijos de división/centro/facultad que NUNCA son, por sí solos, el nombre de una carrera. */
@@ -138,7 +148,7 @@ const GENERIC_PROGRAM_PREFIXES: RegExp[] = [
   /^escuela de$/i, // exacto: "Escuela de" sin nada después
 ];
 
-function normalizeProgramName(value: string): string {
+export function normalizeProgramName(value: string): string {
   return (value || '')
     .toLowerCase()
     .normalize('NFD')

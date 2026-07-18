@@ -2,7 +2,7 @@ import {
   haversineKm,
   costBonus,
   computeBaseScore,
-  findOfferedCareer,
+  findCareerMatch,
   validateAiMatches,
   applyFiltersAndSort,
   MAX_DISTANCE_KM,
@@ -82,7 +82,7 @@ describe('A8 — Capa determinista del matching de universidades', () => {
     });
   });
 
-  describe('findOfferedCareer (match duro)', () => {
+  describe('findCareerMatch (programa real)', () => {
     const uni = {
       steamPrograms: [
         { name: 'Ingeniería en Software', area: 'tecnologia' },
@@ -92,45 +92,72 @@ describe('A8 — Capa determinista del matching de universidades', () => {
 
     it('encuentra la carrera aunque cambien acentos y mayúsculas', () => {
       expect(
-        findOfferedCareer(uni, [{ careerName: 'ingenieria en software' }]),
-      ).toBe('ingenieria en software');
+        findCareerMatch(uni, [
+          { careerName: 'ingenieria en software', axis: 'tecnologia' },
+        ]),
+      ).toEqual({
+        careerName: 'ingenieria en software',
+        matchType: 'direct',
+        matchedProgram: 'Ingeniería en Software',
+      });
     });
 
     it('devuelve la primera carrera de A7 que la universidad ofrece', () => {
       expect(
-        findOfferedCareer(uni, [
-          { careerName: 'Medicina' },
-          { careerName: 'Actuaría' },
+        findCareerMatch(uni, [
+          { careerName: 'Medicina', axis: 'ciencia' },
+          { careerName: 'Actuaría', axis: 'matematicas' },
         ]),
-      ).toBe('Actuaría');
+      ).toEqual({
+        careerName: 'Actuaría',
+        matchType: 'direct',
+        matchedProgram: 'Actuaría',
+      });
     });
 
     it('null (exclusión) si no ofrece ninguna carrera recomendada', () => {
-      expect(findOfferedCareer(uni, [{ careerName: 'Arquitectura' }])).toBe(
-        null,
-      );
       expect(
-        findOfferedCareer({ steamPrograms: [] }, [{ careerName: 'Actuaría' }]),
+        findCareerMatch(uni, [
+          { careerName: 'Arquitectura', axis: 'artes' },
+        ]),
       ).toBe(null);
+      expect(
+        findCareerMatch(
+          { steamPrograms: [] },
+          [{ careerName: 'Actuaría', axis: 'matematicas' }],
+        ),
+      ).toBe(null);
+    });
+
+    it('en match por área conserva el nombre de la carrera que sí ofrece la institución', () => {
+      expect(
+        findCareerMatch(uni, [
+          { careerName: 'Ciencia de Datos', axis: 'matematicas' },
+        ]),
+      ).toEqual({
+        careerName: 'Ciencia de Datos',
+        matchType: 'area',
+        matchedProgram: 'Actuaría',
+      });
     });
   });
 
-  describe('validateAiMatches (anti-alucinación y ±10)', () => {
+  describe('validateAiMatches (anti-alucinación y ±15)', () => {
     const candidates = [
       { universityId: 'u1', baseScore: 80 },
       { universityId: 'u2', baseScore: 60 },
     ] as UniversityCandidate[];
 
-    it('acota el ajuste de la IA a baseScore ± 10', () => {
+    it('acota el ajuste de la IA a baseScore ± 15', () => {
       const validated = validateAiMatches(
         [
-          { universityId: 'u1', matchScore: 99, explanation: 'x' }, // +19 → cap +10
-          { universityId: 'u2', matchScore: 45, explanation: 'y' }, // -15 → cap -10
+          { universityId: 'u1', matchScore: 99, explanation: 'x' }, // +19 → cap +15
+          { universityId: 'u2', matchScore: 45, explanation: 'y' }, // -15 → válido
         ],
         candidates,
       );
-      expect(validated['u1'].matchScore).toBe(90);
-      expect(validated['u2'].matchScore).toBe(50);
+      expect(validated['u1'].matchScore).toBe(95);
+      expect(validated['u2'].matchScore).toBe(45);
     });
 
     it('descarta universidades que no estaban en la lista', () => {

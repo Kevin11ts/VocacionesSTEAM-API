@@ -25,7 +25,15 @@ export class University {
   website: string;
 
   @Column('jsonb', { nullable: true })
-  steamPrograms: { name: string; area: string }[];
+  steamPrograms: { name: string; area: string; sourceUrl?: string }[];
+
+  /** Momento en que la oferta guardada se contrastó contra una fuente oficial. */
+  @Column({ type: 'timestamp', nullable: true })
+  programsVerifiedAt: Date | null;
+
+  /** URL oficial usada para verificar la oferta, o `admin` si fue curada manualmente. */
+  @Column({ nullable: true })
+  programsVerificationSource: string | null;
 
   /** Dato duro para A8: public | affordable | private-premium. */
   @Column({ type: 'varchar', nullable: true })
@@ -53,6 +61,14 @@ export class University {
    */
   @Column({ type: 'timestamp', nullable: true })
   aiEnrichedAt: Date | null;
+
+  /** complete | partial | failed; evita confundir "se intentó" con "se enriqueció". */
+  @Column({ type: 'varchar', nullable: true })
+  aiEnrichmentStatus: string | null;
+
+  /** Diagnóstico breve del último intento fallido, visible para administración. */
+  @Column({ type: 'text', nullable: true })
+  aiEnrichmentError: string | null;
 
   /** URL del sitio oficial que se descargó y se pasó a la IA para ese enriquecimiento. */
   @Column({ nullable: true })

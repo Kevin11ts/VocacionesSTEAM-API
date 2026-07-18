@@ -29,6 +29,7 @@ import {
   DISCARDED_INSTITUTION_TYPES,
   isExcludedInstitutionName,
 } from './institution-filter';
+import { recommendationPrograms } from './program-verification';
 
 /**
  * A8 — Matching de universidades en 2 capas (arquitectura obligatoria):
@@ -36,27 +37,30 @@ import {
  *   CAPA 1 (determinista): match duro por programa en BD, distancia,
  *   costo y baseScore. Corre siempre, sin IA.
  *
- *   CAPA 2 (IA): UNA llamada con la lista candidata; la IA solo ajusta
- *   el baseScore (±10 máx) y redacta la explicación. Salida validada:
+ *   CAPA 2 (IA): lotes acotados con la lista candidata; la IA ajusta
+ *   el baseScore (±15 máx) y redacta la explicación. Salida validada:
  *   universidades fuera de la lista se descartan. El resultado se cachea
  *   y los filtros (km, costo) se aplican sobre el caché al instante.
  */
 /** Nombre de proveedor con el que se cachea la degradación cuando la IA falla. */
 const DETERMINISTIC_FALLBACK_PROVIDER = 'deterministic-fallback';
+const PARTIAL_AI_PROVIDER = 'Groq-partial';
 
 /** Cuánto dura el caché de un fallo de IA antes de reintentar (evita martillar un proveedor caído en cada click de filtro). */
 const FALLBACK_CACHE_TTL_MS = 3 * 60 * 1000;
+const PARTIAL_CACHE_TTL_MS = 60 * 1000;
 
 /** Máximo tiempo de espera por intento de proveedor antes de darlo por caído. */
 const PROVIDER_TIMEOUT_MS = 12_000;
 
 /**
- * Máximo de candidatas que se le pasan a la IA: la mejor coincidencia + 5
- * sugerencias secundarias. Mantener el lote chico ahorra tokens y evita que
- * un JSON con demasiadas universidades degrade la calidad del análisis; el
- * resto de candidatas igual sale en la respuesta con su ranking determinista.
+ * La IA analiza hasta 24 candidatas en lotes pequeños de 4. Dos lotes corren
+ * a la vez: cubre todas las opciones visibles en la mayoría de zonas sin
+ * degradar el JSON ni golpear el rate limit con 24 peticiones simultáneas.
  */
-const MAX_AI_CANDIDATES = 6;
+const AI_BATCH_SIZE = 4;
+const AI_BATCH_CONCURRENCY = 2;
+const MAX_AI_CANDIDATES = 24;
 
 @Injectable()
 export class UniversityMatchService {
@@ -108,10 +112,15 @@ export class UniversityMatchService {
     // ── CAPA 1: candidatas deterministas dentro del radio máximo ─────────
     const candidates = await this.buildCandidates(request, careers);
     if (!candidates.length) {
-      return { matches: [], generatedAt: new Date().toISOString() };
+      return {
+        matches: [],
+        generatedAt: new Date().toISOString(),
+        aiAnalyzedCount: 0,
+        candidateCount: 0,
+      };
     }
 
-    // ── CAPA 2: una llamada a la IA, cacheada ─────────────────────────────
+    // ── CAPA 2: lotes concurrentes de IA, cacheados ──────────────────────
     const cacheKey = this.buildCacheKey(request, careers, candidates);
     let aiResult = await this.loadCachedAdjustments(userId, cacheKey);
     if (!aiResult) {
@@ -157,7 +166,9 @@ export class UniversityMatchService {
           adjustment?.explanation || this.deterministicExplanation(c),
         websiteUrl: c.websiteUrl,
         tuitionRange:
-          c.tuitionRange === 'información no disponible' ? undefined : c.tuitionRange,
+          c.tuitionRange === 'información no disponible'
+            ? undefined
+            : c.tuitionRange,
         modality:
           c.modality === 'información no disponible' ? undefined : c.modality,
         admissionDates: c.admissionDates,
@@ -168,12 +179,18 @@ export class UniversityMatchService {
       };
     });
 
+    const filteredMatches = applyFiltersAndSort(matches, request.filters);
     return {
-      matches: applyFiltersAndSort(matches, request.filters),
+      matches: filteredMatches,
       generatedAt: new Date().toISOString(),
+      aiAnalyzedCount: filteredMatches.filter((match) => match.aiAnalyzed)
+        .length,
+      candidateCount: filteredMatches.length,
       aiProvider:
         aiResult && aiResult.provider !== DETERMINISTIC_FALLBACK_PROVIDER
-          ? aiResult.provider
+          ? aiResult.provider === PARTIAL_AI_PROVIDER
+            ? 'Groq (parcial)'
+            : aiResult.provider
           : 'deterministic',
     };
   }
@@ -241,7 +258,8 @@ export class UniversityMatchService {
       // nombre) y lo que la IA ya clasificó como no-universidad.
       if (
         isExcludedInstitutionName(u.name) ||
-        (u.institutionType && DISCARDED_INSTITUTION_TYPES.has(u.institutionType))
+        (u.institutionType &&
+          DISCARDED_INSTITUTION_TYPES.has(u.institutionType))
       ) {
         return false;
       }
@@ -251,10 +269,14 @@ export class UniversityMatchService {
     const distances = await this.resolveDistances(origin, located);
 
     for (const university of located) {
+      const verifiedPrograms = recommendationPrograms(university);
       // Matching en 2 niveles: directo (nombre) o por eje STEAM (área).
       // Solo se excluye si no tiene programas o ninguno cae en los ejes
       // recomendados.
-      const careerMatch = findCareerMatch(university, careers);
+      const careerMatch = findCareerMatch(
+        { steamPrograms: verifiedPrograms },
+        careers,
+      );
       if (!careerMatch) continue;
 
       const distanceKm = distances.get(university.id);
@@ -277,7 +299,7 @@ export class UniversityMatchService {
         rating,
         modality: university.modality ?? 'información no disponible',
         admissionDates: university.admissionDates ?? undefined,
-        steamPrograms: university.steamPrograms ?? undefined,
+        steamPrograms: verifiedPrograms,
         // baseScore NEUTRAL (preferencia 'any'): es lo que ve la IA y lo
         // que ancla el cacheKey. Así cambiar el filtro de costo NO invalida
         // el caché ni re-llama a la IA; el bono por preferencia se aplica
@@ -368,7 +390,7 @@ export class UniversityMatchService {
         `recomendada (${c.offersCareer}); es ${tier} y está a ${c.distanceKm} km de ti.`
       );
     }
-    return `Ofrece ${c.offersCareer}, es ${tier} y está a ${c.distanceKm} km de ti.`;
+    return `Ofrece ${c.matchedProgram || c.offersCareer}, es ${tier} y está a ${c.distanceKm} km de ti.`;
   }
 
   // ==========================================================================
@@ -387,8 +409,14 @@ export class UniversityMatchService {
         lng: Math.round(request.userLocation.lng * 1000) / 1000,
       },
       candidates: candidates
-        .map((c) => `${c.universityId}:${c.baseScore}`)
-        .sort(),
+        .map((c) => ({
+          id: c.universityId,
+          score: c.baseScore,
+          programs: (c.steamPrograms || [])
+            .map((program) => `${program.name}:${program.area}`)
+            .sort(),
+        }))
+        .sort((a, b) => a.id.localeCompare(b.id)),
     };
     return createHash('sha256').update(JSON.stringify(payload)).digest('hex');
   }
@@ -411,6 +439,10 @@ export class UniversityMatchService {
       const ageMs = Date.now() - row.updatedAt.getTime();
       if (ageMs > FALLBACK_CACHE_TTL_MS) return null;
     }
+    if (row.provider === PARTIAL_AI_PROVIDER) {
+      const ageMs = Date.now() - row.updatedAt.getTime();
+      if (ageMs > PARTIAL_CACHE_TTL_MS) return null;
+    }
     return { adjustments: row.aiAdjustments, provider: row.provider };
   }
 
@@ -426,74 +458,147 @@ export class UniversityMatchService {
     adjustments: Record<string, ValidatedAiAdjustment>;
     provider: string;
   } | null> {
-    // Solo las mejores candidatas van al prompt (control de tokens); el
-    // resto sale igual en la respuesta con su ranking determinista.
+    // Se prioriza por baseScore, pero todas las candidatas visibles en una
+    // zona normal caben en los lotes (hasta 24).
     const aiCandidates = [...candidates]
       .sort((a, b) => b.baseScore - a.baseScore)
       .slice(0, MAX_AI_CANDIDATES);
 
-    const prompt = this.buildPrompt(
-      aiCandidates,
-      careers,
-      dominantAxes,
-      calibrationLevel,
-      request,
-    );
-
     if (!this.groq) {
       this.logger.warn('A8: Groq deshabilitado (sin API key), se omite.');
-      await this.upsertCache(userId, cacheKey, {}, DETERMINISTIC_FALLBACK_PROVIDER);
+      await this.upsertCache(
+        userId,
+        cacheKey,
+        {},
+        DETERMINISTIC_FALLBACK_PROVIDER,
+      );
       return null;
     }
 
-    const startTime = Date.now();
-    try {
-      const { text, tokens } = await this.withTimeout(
-        this.callGroq(prompt),
-        PROVIDER_TIMEOUT_MS,
-        'Groq',
-      );
-      const cleaned = text.replace(/```json|```/g, '').trim();
-      const parsed = JSON.parse(cleaned);
-      const validated = validateAiMatches(
-        parsed?.matches ?? [],
-        aiCandidates,
-        careers,
-      );
+    const batches: UniversityCandidate[][] = [];
+    for (let index = 0; index < aiCandidates.length; index += AI_BATCH_SIZE) {
+      batches.push(aiCandidates.slice(index, index + AI_BATCH_SIZE));
+    }
 
+    const startTime = Date.now();
+    const combined: Record<string, ValidatedAiAdjustment> = {};
+    const batchErrors: string[] = [];
+    let totalTokens = 0;
+    let successfulBatches = 0;
+
+    const executeBatches = async (pendingBatches: UniversityCandidate[][]) => {
+      for (
+        let index = 0;
+        index < pendingBatches.length;
+        index += AI_BATCH_CONCURRENCY
+      ) {
+        const wave = pendingBatches.slice(index, index + AI_BATCH_CONCURRENCY);
+        const results = await Promise.allSettled(
+          wave.map(async (batch) => {
+            const prompt = this.buildPrompt(
+              batch,
+              careers,
+              dominantAxes,
+              calibrationLevel,
+              request,
+            );
+            const { text, tokens } = await this.withTimeout(
+              this.callGroq(prompt),
+              PROVIDER_TIMEOUT_MS,
+              'Groq',
+            );
+            const parsed = JSON.parse(text.replace(/```json|```/g, '').trim());
+            return {
+              tokens,
+              adjustments: validateAiMatches(
+                parsed?.matches ?? [],
+                batch,
+                careers,
+              ),
+            };
+          }),
+        );
+
+        for (const result of results) {
+          if (result.status === 'fulfilled') {
+            successfulBatches++;
+            totalTokens += result.value.tokens;
+            Object.assign(combined, result.value.adjustments);
+          } else {
+            const detail = this.describeProviderError(result.reason);
+            batchErrors.push(detail);
+            this.logger.error(`A8: un lote de Groq falló: ${detail}`);
+          }
+        }
+      }
+    };
+
+    await executeBatches(batches);
+
+    // Si el modelo omitió universidades a pesar de la instrucción de incluir
+    // todas, se hace un segundo intento solo con las faltantes. El flujo
+    // anterior cacheaba esa respuesta incompleta para siempre y por eso a
+    // algunos usuarios les aparecían únicamente dos tarjetas con IA.
+    const missingAfterFirstPass = aiCandidates.filter(
+      (candidate) => !combined[candidate.universityId],
+    );
+    if (missingAfterFirstPass.length) {
+      const retryBatches: UniversityCandidate[][] = [];
+      for (
+        let index = 0;
+        index < missingAfterFirstPass.length;
+        index += AI_BATCH_SIZE
+      ) {
+        retryBatches.push(
+          missingAfterFirstPass.slice(index, index + AI_BATCH_SIZE),
+        );
+      }
+      await executeBatches(retryBatches);
+    }
+
+    if (successfulBatches > 0) {
+      const missingCount = aiCandidates.filter(
+        (candidate) => !combined[candidate.universityId],
+      ).length;
+      const isPartial = missingCount > 0;
       await this.saveLog(
         userId,
         dominantAxes.join(' + '),
         Date.now() - startTime,
         true,
-        '',
-        tokens,
+        isPartial
+          ? `Resultado parcial: ${missingCount} omitidas. ${batchErrors.join(' | ')}`
+          : batchErrors.length
+            ? `Recuperado tras reintento: ${batchErrors.join(' | ')}`
+            : '',
+        totalTokens,
         'Groq',
       );
-
-      // Cachear solo resultados exitosos: los filtros posteriores se
-      // aplican sobre este caché sin volver a llamar a la IA.
-      await this.upsertCache(userId, cacheKey, validated, 'Groq');
-      return { adjustments: validated, provider: 'Groq' };
-    } catch (error) {
-      const detail = this.describeProviderError(error);
-      this.logger.error(`A8 falló con Groq: ${detail}`);
-      await this.saveLog(
-        userId,
-        dominantAxes.join(' + '),
-        Date.now() - startTime,
-        false,
-        detail,
-        0,
-        'Groq',
-      );
+      const provider = isPartial ? PARTIAL_AI_PROVIDER : 'Groq';
+      await this.upsertCache(userId, cacheKey, combined, provider);
+      return { adjustments: combined, provider };
     }
+
+    await this.saveLog(
+      userId,
+      dominantAxes.join(' + '),
+      Date.now() - startTime,
+      false,
+      batchErrors.join(' | ') || 'Ningún lote de Groq respondió',
+      totalTokens,
+      'Groq',
+    );
 
     // Degradación limpia: ranking 100% determinista (matchScore = baseScore).
     // Se cachea con TTL corto (FALLBACK_CACHE_TTL_MS) para que los clicks de
     // filtro no vuelvan a martillar un proveedor caído en cada request.
     this.logger.warn('A8 sin IA disponible: se responde solo con baseScore');
-    await this.upsertCache(userId, cacheKey, {}, DETERMINISTIC_FALLBACK_PROVIDER);
+    await this.upsertCache(
+      userId,
+      cacheKey,
+      {},
+      DETERMINISTIC_FALLBACK_PROVIDER,
+    );
     return null;
   }
 
@@ -513,13 +618,22 @@ export class UniversityMatchService {
       await this.cacheRepository.save(existing);
     } else {
       await this.cacheRepository.save(
-        this.cacheRepository.create({ userId, cacheKey, aiAdjustments, provider }),
+        this.cacheRepository.create({
+          userId,
+          cacheKey,
+          aiAdjustments,
+          provider,
+        }),
       );
     }
   }
 
   /** Corta una llamada a proveedor que tarde más de `ms` (evita cuelgues). */
-  private withTimeout<T>(promise: Promise<T>, ms: number, provider: string): Promise<T> {
+  private withTimeout<T>(
+    promise: Promise<T>,
+    ms: number,
+    provider: string,
+  ): Promise<T> {
     return new Promise<T>((resolve, reject) => {
       const timer = setTimeout(
         () => reject(new Error(`Timeout de ${ms}ms esperando a ${provider}`)),
@@ -554,9 +668,9 @@ export class UniversityMatchService {
       messages: [{ role: 'user', content: prompt }],
       temperature: 0.2,
       response_format: { type: 'json_object' },
-      // La salida ahora trae matchedCareer/matchedProgram/explicación por
-      // cada una de hasta 25 candidatas: 3000 quedaba justo y truncaba el JSON.
-      max_tokens: 4000,
+      // Cada llamada incluye únicamente cuatro candidatas, así que este margen
+      // alcanza para sus explicaciones sin permitir respuestas innecesariamente largas.
+      max_tokens: 2500,
     });
     return {
       text: completion.choices[0]?.message?.content || '{}',
@@ -595,8 +709,8 @@ export class UniversityMatchService {
         universityId: c.universityId,
         name: c.name,
         // Match determinista de partida (la IA puede refinarlo):
-        matchType: c.matchType,        // 'direct' = nombre coincide | 'area' = mismo eje STEAM
-        offersCareer: c.offersCareer,  // carrera recomendada que hizo match
+        matchType: c.matchType, // 'direct' = nombre coincide | 'area' = mismo eje STEAM
+        offersCareer: c.offersCareer, // carrera recomendada que hizo match
         matchedProgram: c.matchedProgram, // programa real que lo produjo
         steamPrograms: (c.steamPrograms || []).map((p) => ({
           name: p.name,

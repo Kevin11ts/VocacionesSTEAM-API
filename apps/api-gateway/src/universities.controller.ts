@@ -251,9 +251,9 @@ export class AdminUniversitiesController {
 
   @ApiOperation({
     summary:
-      'Enriquece con IA (Groq) universidades con website pero sin ' +
-      'steamPrograms/costTier/tuitionRange/modality — lee el sitio real, ' +
-      'no inventa (Admin only). Solo rellena huecos, nunca sobreescribe.',
+      'Verifica y enriquece con IA (Groq) hasta 12 universidades en paralelo. ' +
+      'Cada carrera debe aparecer literalmente en una página oficial; la oferta ' +
+      'automática se revalida y la curada por admin se conserva.',
   })
   @ApiResponse({
     status: 201,
@@ -262,7 +262,7 @@ export class AdminUniversitiesController {
   })
   @ApiBody({
     required: false,
-    schema: { example: { limit: 5, filter: 'Orizaba' } },
+    schema: { example: { limit: 12, filter: 'Orizaba' } },
   })
   @Post('enrich')
   async enrichWithAi(@Body() body: { limit?: number; filter?: string }) {

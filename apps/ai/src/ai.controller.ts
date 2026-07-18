@@ -14,7 +14,7 @@ export class AiController {
   ) {}
 
   /**
-   * A8 — Matching de universidades (única llamada a IA del sistema).
+   * A8 — Matching de universidades (única capacidad de IA del sistema).
    * El perfil vocacional (A1-A7) es 100% determinista y vive en apps/tests.
    */
   @MessagePattern({ cmd: 'ai.match-universities' })
