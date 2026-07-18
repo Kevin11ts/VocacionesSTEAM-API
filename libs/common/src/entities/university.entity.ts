@@ -32,7 +32,7 @@ export class University {
   programsVerifiedAt: Date | null;
 
   /** URL oficial usada para verificar la oferta, o `admin` si fue curada manualmente. */
-  @Column({ nullable: true })
+  @Column({ type: 'varchar', nullable: true })
   programsVerificationSource: string | null;
 
   /** Dato duro para A8: public | affordable | private-premium. */
