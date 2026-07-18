@@ -54,6 +54,7 @@ export class UniversitiesController {
     @Query('lat') lat: string,
     @Query('lng') lng: string,
     @Query('radiusKm') radiusKm?: string,
+    @Query('limit') limit?: string,
   ) {
     return lastValueFrom(
       this.aiClient.send(
@@ -62,6 +63,7 @@ export class UniversitiesController {
           lat: parseFloat(lat),
           lng: parseFloat(lng),
           radiusKm: radiusKm ? parseFloat(radiusKm) : undefined,
+          limit: limit ? parseInt(limit, 10) : undefined,
         },
       ),
     );

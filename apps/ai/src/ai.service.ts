@@ -113,6 +113,9 @@ export class AiService {
     ) {
       throw new Error('lat y lng son obligatorios');
     }
+    const safeLimit = Number.isFinite(limit)
+      ? Math.min(Math.max(Math.trunc(limit), 1), 250)
+      : 40;
     const all = await this.universityRepository.find();
     return all
       .filter(
@@ -140,7 +143,7 @@ export class AiService {
       }))
       .filter((u) => u.distanceKm <= radiusKm)
       .sort((a, b) => a.distanceKm - b.distanceKm)
-      .slice(0, limit);
+      .slice(0, safeLimit);
   }
 
   /**
