@@ -35,7 +35,7 @@ export class UserLocationDto {
 }
 
 export class UniversityMatchFiltersDto {
-  @ApiProperty({ example: 50, enum: MATCH_DISTANCE_OPTIONS })
+  @ApiProperty({ example: 30, enum: MATCH_DISTANCE_OPTIONS })
   @IsIn([...MATCH_DISTANCE_OPTIONS])
   maxDistanceKm: number;
 

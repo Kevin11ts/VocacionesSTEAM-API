@@ -8,10 +8,10 @@ import { SteamAxis } from './vocational-profile.types';
 export type CostTier = 'public' | 'affordable' | 'private-premium';
 export type CostPreference = 'public' | 'affordable' | 'any';
 
-export const MATCH_DISTANCE_OPTIONS = [10, 25, 50, 100] as const;
+export const MATCH_DISTANCE_OPTIONS = [10, 30, 50] as const;
 
 export interface UniversityMatchFilters {
-  /** 10 | 25 | 50 | 100 km. Se aplica sobre el caché, sin llamar a la IA. */
+  /** 10 | 30 | 50 km. Define las candidatas antes de calcular el ranking. */
   maxDistanceKm: number;
   costPreference: CostPreference;
 }

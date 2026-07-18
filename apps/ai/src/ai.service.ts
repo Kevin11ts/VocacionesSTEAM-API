@@ -102,7 +102,7 @@ export class AiService {
   async getNearbyUniversities(
     lat: number,
     lng: number,
-    radiusKm = 25,
+    radiusKm = 30,
     limit = 40,
   ): Promise<(University & { distanceKm: number })[]> {
     if (
@@ -186,7 +186,7 @@ export class AiService {
   async findOrDiscoverNearby(
     lat: number,
     lng: number,
-    radiusKm = 25,
+    radiusKm = 30,
   ): Promise<(University & { distanceKm: number })[]> {
     const dbNearby = await this.getNearbyUniversities(lat, lng, radiusKm);
 
