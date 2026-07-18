@@ -75,18 +75,30 @@ export class UniversitiesController {
   })
   @ApiResponse({
     status: 201,
-    description: 'Lista ordenada por distancia, cada una con distanceKm',
+    description:
+      '{ universities, processing, complete, coverageCount, verifiedCount, startedAt?, updatedAt, retryAt?, error? }. Devuelve inmediatamente y el procesamiento continúa en segundo plano.',
   })
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard)
   @Post('nearby-discover')
   async discoverNearby(
-    @Body() body: { lat: number; lng: number; radiusKm?: number },
+    @Body()
+    body: {
+      lat: number;
+      lng: number;
+      radiusKm?: number;
+      forceRefresh?: boolean;
+    },
   ) {
     return lastValueFrom(
       this.aiClient.send(
         { cmd: 'ai.nearby-discover' },
-        { lat: body.lat, lng: body.lng, radiusKm: body.radiusKm },
+        {
+          lat: body.lat,
+          lng: body.lng,
+          radiusKm: body.radiusKm,
+          forceRefresh: body.forceRefresh,
+        },
       ),
     );
   }
@@ -171,7 +183,8 @@ export class AdminUniversitiesController {
   }
 
   @ApiOperation({
-    summary: 'Elimina TODAS las universidades (Admin only) — para reiniciar el mapeo',
+    summary:
+      'Elimina TODAS las universidades (Admin only) — para reiniciar el mapeo',
   })
   @ApiResponse({ status: 200, description: '{ deleted: number }' })
   @Delete('all')
@@ -307,7 +320,10 @@ export class AdminUniversitiesController {
       'Exporta universidades (con id) como JSON para editar a mano y ' +
       'reimportar con bulk-update. `filter` (opcional): texto en nombre/dirección.',
   })
-  @ApiResponse({ status: 200, description: 'Arreglo de universidades completas' })
+  @ApiResponse({
+    status: 200,
+    description: 'Arreglo de universidades completas',
+  })
   @Get('export')
   async exportUniversities(@Query('filter') filter?: string) {
     return lastValueFrom(
@@ -325,7 +341,9 @@ export class AdminUniversitiesController {
     description: '{ updated, failed, errors: [{ index, name, error }] }',
   })
   @ApiBody({
-    schema: { example: { universities: [{ id: 'uuid-existente', costTier: 'public' }] } },
+    schema: {
+      example: { universities: [{ id: 'uuid-existente', costTier: 'public' }] },
+    },
   })
   @Post('bulk-update')
   async bulkUpdate(@Body() body: { universities: any[] }) {

@@ -45,6 +45,8 @@ import { recommendationPrograms } from './program-verification';
 /** Nombre de proveedor con el que se cachea la degradación cuando la IA falla. */
 const DETERMINISTIC_FALLBACK_PROVIDER = 'deterministic-fallback';
 const PARTIAL_AI_PROVIDER = 'Groq-partial';
+/** Invalida resultados previos cuando cambia el contexto incluido en el prompt. */
+const A8_CACHE_VERSION = 'a8-v3-progressive-profile';
 
 /** Cuánto dura el caché de un fallo de IA antes de reintentar (evita martillar un proveedor caído en cada click de filtro). */
 const FALLBACK_CACHE_TTL_MS = 3 * 60 * 1000;
@@ -52,6 +54,8 @@ const PARTIAL_CACHE_TTL_MS = 60 * 1000;
 
 /** Máximo tiempo de espera por intento de proveedor antes de darlo por caído. */
 const PROVIDER_TIMEOUT_MS = 12_000;
+const DISTANCE_MATRIX_TIMEOUT_MS = 4_000;
+const DISTANCE_CACHE_TTL_MS = 10 * 60 * 1000;
 
 /**
  * La IA analiza hasta 60 candidatas en lotes pequeños de 4. Este trabajo
@@ -68,6 +72,11 @@ export class UniversityMatchService {
   private readonly groq: Groq | null;
   /** Evita duplicar el mismo análisis mientras el frontend consulta su avance. */
   private readonly aiJobsInFlight = new Map<string, Promise<void>>();
+  /** Evita repetir Distance Matrix en cada consulta de progreso de A8. */
+  private readonly distanceCache = new Map<
+    string,
+    { expiresAt: number; values: [string, number][] }
+  >();
 
   constructor(
     private readonly configService: ConfigService,
@@ -103,7 +112,7 @@ export class UniversityMatchService {
       throw new RpcException('userLocation {lat, lng} es obligatorio');
     }
 
-    const { careers, dominantAxes, calibrationLevel } =
+    const { careers, dominantAxes, calibrationLevel, profileVersion } =
       await this.resolveStudentContext(userId, request);
     if (!careers.length) {
       throw new RpcException(
@@ -124,33 +133,43 @@ export class UniversityMatchService {
     }
 
     // ── CAPA 2: lotes concurrentes de IA, cacheados ──────────────────────
-    const cacheKey = this.buildCacheKey(request, careers, candidates);
-    let aiResult = await this.loadCachedAdjustments(userId, cacheKey);
-    let aiProcessing = aiResult?.provider === PARTIAL_AI_PROVIDER;
-    if (!aiResult) {
-      if (this.groq) {
-        aiProcessing = true;
-        this.startAiJob(
-          userId,
-          candidates,
-          careers,
-          dominantAxes,
-          calibrationLevel,
-          request,
-          cacheKey,
-        );
-      } else {
-        aiResult = await this.requestAiAdjustments(
-          userId,
-          candidates,
-          careers,
-          dominantAxes,
-          calibrationLevel,
-          request,
-          cacheKey,
-        );
-      }
+    const cacheKey = this.buildCacheKey(
+      request,
+      careers,
+      candidates,
+      dominantAxes,
+      calibrationLevel,
+      profileVersion,
+    );
+    const aiResult = await this.loadCachedAdjustments(userId, cacheKey);
+    const jobKey = this.buildAiJobKey(userId, cacheKey);
+    const retryDelayMs = aiResult ? this.retryDelayForCache(aiResult) : 0;
+    if (this.groq && (!aiResult || retryDelayMs !== null)) {
+      this.startAiJob(
+        userId,
+        candidates,
+        careers,
+        dominantAxes,
+        calibrationLevel,
+        request,
+        cacheKey,
+        retryDelayMs ?? 0,
+        aiResult?.adjustments ?? {},
+      );
+    } else if (!this.groq && !aiResult) {
+      await this.requestAiAdjustments(
+        userId,
+        candidates,
+        careers,
+        dominantAxes,
+        calibrationLevel,
+        request,
+        cacheKey,
+      );
     }
+    // Nunca se infiere el estado a partir de una fila parcial: solo es true si
+    // este proceso realmente conserva un job activo para esa clave.
+    const aiProcessing = this.aiJobsInFlight.has(jobKey);
     const adjustments = aiResult?.adjustments ?? null;
 
     // ── Ensamble + filtro de costo sobre el caché (sin IA) ────────────────
@@ -203,7 +222,11 @@ export class UniversityMatchService {
     const filteredMatches = applyFiltersAndSort(matches, request.filters);
     return {
       matches: filteredMatches,
-      generatedAt: new Date().toISOString(),
+      // Para una caché, conserva la fecha real en que cambió el ranking. Esto
+      // permite al cliente decidir si reemplaza su copia local sin confundir
+      // cada polling con una generación nueva.
+      generatedAt:
+        aiResult?.updatedAt?.toISOString() ?? new Date().toISOString(),
       aiAnalyzedCount: filteredMatches.filter((match) => match.aiAnalyzed)
         .length,
       candidateCount: filteredMatches.length,
@@ -228,16 +251,24 @@ export class UniversityMatchService {
     careers: RecommendedCareerInput[];
     dominantAxes: string[];
     calibrationLevel: number;
+    profileVersion: string;
   }> {
     let careers = request.recommendedCareers ?? [];
     let dominantAxes: string[] = [];
     let calibrationLevel = 55;
+    let profileVersion = 'request-only';
 
     const latestTest = await this.testsRepository.findOne({
       where: { user: { id: userId } },
       order: { completedAt: 'DESC' },
     });
     const profile = latestTest?.profile;
+    if (latestTest) {
+      profileVersion = [
+        latestTest.id,
+        latestTest.completedAt?.toISOString?.() || '',
+      ].join(':');
+    }
     if (profile) {
       dominantAxes = profile.dominantAxes ?? [];
       calibrationLevel = profile.calibration?.level ?? 55;
@@ -251,7 +282,7 @@ export class UniversityMatchService {
     if (!dominantAxes.length) {
       dominantAxes = [...new Set(careers.map((c) => c.axis))];
     }
-    return { careers, dominantAxes, calibrationLevel };
+    return { careers, dominantAxes, calibrationLevel, profileVersion };
   }
 
   // ==========================================================================
@@ -262,12 +293,15 @@ export class UniversityMatchService {
     request: UniversityMatchRequest,
     careers: RecommendedCareerInput[],
   ): Promise<UniversityCandidate[]> {
-    const universities = await this.universityRepository.find();
     const origin = request.userLocation;
     const candidates: UniversityCandidate[] = [];
     const requestedRadiusKm = Math.max(
       1,
       Math.min(request.filters.maxDistanceKm, MAX_DISTANCE_KM),
+    );
+    const universities = await this.findUniversitiesInBoundingBox(
+      origin,
+      requestedRadiusKm,
     );
 
     const located = universities.filter((u) => {
@@ -302,19 +336,35 @@ export class UniversityMatchService {
           lng: university.location.longitude,
         }) <= requestedRadiusKm,
     );
-    const distances = await this.resolveDistances(origin, locatedInsideRadius);
-
-    for (const university of locatedInsideRadius) {
-      const verifiedPrograms = recommendationPrograms(university);
-      // Matching en 2 niveles: directo (nombre) o por eje STEAM (área).
-      // Solo se excluye si no tiene programas o ninguno cae en los ejes
-      // recomendados.
-      const careerMatch = findCareerMatch(
-        { steamPrograms: verifiedPrograms },
-        careers,
+    // Antes de llamar Distance Matrix se descartan fichas sin oferta afín. En
+    // zonas densas esto evita decenas de requests externos que nunca podían
+    // convertirse en una tarjeta de A8.
+    const eligible = locatedInsideRadius
+      .map((university) => {
+        const verifiedPrograms = recommendationPrograms(university);
+        const careerMatch = findCareerMatch(
+          { steamPrograms: verifiedPrograms },
+          careers,
+        );
+        return careerMatch
+          ? { university, verifiedPrograms, careerMatch }
+          : null;
+      })
+      .filter(
+        (
+          value,
+        ): value is {
+          university: University;
+          verifiedPrograms: ReturnType<typeof recommendationPrograms>;
+          careerMatch: NonNullable<ReturnType<typeof findCareerMatch>>;
+        } => !!value,
       );
-      if (!careerMatch) continue;
+    const distances = await this.resolveDistances(
+      origin,
+      eligible.map(({ university }) => university),
+    );
 
+    for (const { university, verifiedPrograms, careerMatch } of eligible) {
       const distanceKm = distances.get(university.id);
       if (distanceKm === undefined || distanceKm > requestedRadiusKm) continue;
 
@@ -360,6 +410,47 @@ export class UniversityMatchService {
   }
 
   /**
+   * Reduce en Postgres el universo de A8 antes de deserializar programas y
+   * demás JSON. El filtro Haversine posterior mantiene el círculo exacto.
+   */
+  private async findUniversitiesInBoundingBox(
+    origin: { lat: number; lng: number },
+    radiusKm: number,
+  ): Promise<University[]> {
+    const repository = this.universityRepository as Repository<University> & {
+      createQueryBuilder?: Repository<University>['createQueryBuilder'];
+    };
+    if (typeof repository.createQueryBuilder !== 'function') {
+      // Compatibilidad con repositorios mock de pruebas unitarias.
+      return this.universityRepository.find();
+    }
+
+    const latitudeDelta = radiusKm / 110.574;
+    const longitudeDelta =
+      radiusKm /
+      (111.32 *
+        Math.max(Math.abs(Math.cos((origin.lat * Math.PI) / 180)), 0.01));
+    return repository
+      .createQueryBuilder('university')
+      .where('university.location IS NOT NULL')
+      .andWhere(
+        `(university.location ->> 'latitude')::double precision BETWEEN :minLat AND :maxLat`,
+        {
+          minLat: origin.lat - latitudeDelta,
+          maxLat: origin.lat + latitudeDelta,
+        },
+      )
+      .andWhere(
+        `(university.location ->> 'longitude')::double precision BETWEEN :minLng AND :maxLng`,
+        {
+          minLng: origin.lng - longitudeDelta,
+          maxLng: origin.lng + longitudeDelta,
+        },
+      )
+      .getMany();
+  }
+
+  /**
    * Distancias origen→universidades. Usa Google Maps Distance Matrix si hay
    * GOOGLE_MAPS_API_KEY configurada; si no (o si falla), cae a haversine.
    */
@@ -367,6 +458,28 @@ export class UniversityMatchService {
     origin: { lat: number; lng: number },
     universities: University[],
   ): Promise<Map<string, number>> {
+    const distanceCacheKey = createHash('sha256')
+      .update(
+        JSON.stringify({
+          origin: {
+            lat: Math.round(origin.lat * 1000) / 1000,
+            lng: Math.round(origin.lng * 1000) / 1000,
+          },
+          destinations: universities
+            .map((university) => ({
+              id: university.id,
+              lat: university.location.latitude,
+              lng: university.location.longitude,
+            }))
+            .sort((a, b) => a.id.localeCompare(b.id)),
+        }),
+      )
+      .digest('hex');
+    const cached = this.distanceCache.get(distanceCacheKey);
+    if (cached && cached.expiresAt > Date.now()) {
+      return new Map(cached.values);
+    }
+
     const result = new Map<string, number>();
     for (const u of universities) {
       result.set(
@@ -379,7 +492,10 @@ export class UniversityMatchService {
     }
 
     const apiKey = this.configService.get<string>('GOOGLE_MAPS_API_KEY');
-    if (!apiKey) return result;
+    if (!apiKey) {
+      this.saveDistanceCache(distanceCacheKey, result);
+      return result;
+    }
 
     try {
       const chunkSize = 25; // límite de destinos por request del API
@@ -393,8 +509,23 @@ export class UniversityMatchService {
           `?origins=${origin.lat},${origin.lng}` +
           `&destinations=${encodeURIComponent(destinations)}` +
           `&key=${apiKey}`;
-        const response = await fetch(url);
-        const data: any = await response.json();
+        const controller = new AbortController();
+        const timer = setTimeout(
+          () => controller.abort(),
+          DISTANCE_MATRIX_TIMEOUT_MS,
+        );
+        let data: any;
+        try {
+          const response = await fetch(url, { signal: controller.signal });
+          if (!response.ok) {
+            throw new Error(
+              `Distance Matrix respondió HTTP ${response.status}`,
+            );
+          }
+          data = await response.json();
+        } finally {
+          clearTimeout(timer);
+        }
         const elements = data?.rows?.[0]?.elements ?? [];
         chunk.forEach((u, idx) => {
           const element = elements[idx];
@@ -411,7 +542,22 @@ export class UniversityMatchService {
         `Distance Matrix falló, usando haversine: ${error.message}`,
       );
     }
+    this.saveDistanceCache(distanceCacheKey, result);
     return result;
+  }
+
+  private saveDistanceCache(key: string, distances: Map<string, number>): void {
+    // Acotado para no crecer indefinidamente en procesos de larga vida.
+    if (this.distanceCache.size >= 200) {
+      const oldestKey = this.distanceCache.keys().next().value as
+        | string
+        | undefined;
+      if (oldestKey) this.distanceCache.delete(oldestKey);
+    }
+    this.distanceCache.set(key, {
+      expiresAt: Date.now() + DISTANCE_CACHE_TTL_MS,
+      values: [...distances.entries()],
+    });
   }
 
   private deterministicExplanation(c: UniversityCandidate): string {
@@ -442,19 +588,28 @@ export class UniversityMatchService {
     calibrationLevel: number,
     request: UniversityMatchRequest,
     cacheKey: string,
+    delayMs = 0,
+    existingAdjustments: Record<string, ValidatedAiAdjustment> = {},
   ): void {
-    const jobKey = `${userId}:${cacheKey}`;
+    const jobKey = this.buildAiJobKey(userId, cacheKey);
     if (this.aiJobsInFlight.has(jobKey)) return;
 
-    const job = this.requestAiAdjustments(
-      userId,
-      candidates,
-      careers,
-      dominantAxes,
-      calibrationLevel,
-      request,
-      cacheKey,
-    )
+    // Una caché parcial/fallback fresca sigue siendo trabajo pendiente. El job
+    // queda registrado desde ahora (por eso el cliente continúa sondeando),
+    // espera el backoff restante y reintenta sin exigir otra visita o recarga.
+    const job = (async () => {
+      if (delayMs > 0) await this.waitForAiRetry(delayMs);
+      return this.requestAiAdjustments(
+        userId,
+        candidates,
+        careers,
+        dominantAxes,
+        calibrationLevel,
+        request,
+        cacheKey,
+        existingAdjustments,
+      );
+    })()
       .then(() => undefined)
       .catch((error) => {
         this.logger.error(
@@ -465,13 +620,38 @@ export class UniversityMatchService {
     this.aiJobsInFlight.set(jobKey, job);
   }
 
+  private waitForAiRetry(delayMs: number): Promise<void> {
+    return new Promise((resolve) => {
+      const timer = setTimeout(resolve, delayMs);
+      timer.unref?.();
+    });
+  }
+
+  private buildAiJobKey(userId: string, cacheKey: string): string {
+    return `${userId}:${cacheKey}`;
+  }
+
   private buildCacheKey(
     request: UniversityMatchRequest,
     careers: RecommendedCareerInput[],
     candidates: UniversityCandidate[],
+    dominantAxes: string[],
+    calibrationLevel: number,
+    profileVersion: string,
   ): string {
     const payload = {
-      careers: careers.map((c) => c.careerName).sort(),
+      version: A8_CACHE_VERSION,
+      profile: {
+        version: profileVersion,
+        dominantAxes,
+        calibrationLevel,
+      },
+      // El orden de A7 es significativo: la primera carrera tiene prioridad
+      // en el match determinista y no debe colapsarse mediante sort().
+      careers: careers.map((career) => ({
+        careerName: career.careerName,
+        axis: career.axis,
+      })),
       location: {
         lat: Math.round(request.userLocation.lat * 1000) / 1000,
         lng: Math.round(request.userLocation.lng * 1000) / 1000,
@@ -483,7 +663,16 @@ export class UniversityMatchService {
       candidates: candidates
         .map((c) => ({
           id: c.universityId,
+          name: c.name,
           score: c.baseScore,
+          offersCareer: c.offersCareer,
+          matchType: c.matchType,
+          matchedProgram: c.matchedProgram,
+          distanceKm: c.distanceKm,
+          costTier: c.costTier,
+          tuitionRange: c.tuitionRange,
+          rating: c.rating,
+          modality: c.modality,
           programs: (c.steamPrograms || [])
             .map((program) => `${program.name}:${program.area}`)
             .sort(),
@@ -499,23 +688,34 @@ export class UniversityMatchService {
   ): Promise<{
     adjustments: Record<string, ValidatedAiAdjustment>;
     provider: string;
+    updatedAt: Date;
   } | null> {
     const row = await this.cacheRepository.findOne({
       where: { userId, cacheKey },
     });
     if (!row) return null;
 
-    // La degradación (IA caída) se cachea con TTL corto: pasado ese tiempo
-    // se reintenta por si el proveedor ya se recuperó.
-    if (row.provider === DETERMINISTIC_FALLBACK_PROVIDER) {
-      const ageMs = Date.now() - row.updatedAt.getTime();
-      if (ageMs > FALLBACK_CACHE_TTL_MS) return null;
+    // Incluso vencida se conserva la fotografía parcial para mostrarla durante
+    // el reintento; el caller decide si inicia un nuevo trabajo.
+    return {
+      adjustments: row.aiAdjustments,
+      provider: row.provider,
+      updatedAt: row.updatedAt,
+    };
+  }
+
+  private retryDelayForCache(cache: {
+    provider: string;
+    updatedAt: Date;
+  }): number | null {
+    const ageMs = Date.now() - cache.updatedAt.getTime();
+    if (cache.provider === DETERMINISTIC_FALLBACK_PROVIDER) {
+      return Math.max(0, FALLBACK_CACHE_TTL_MS - ageMs);
     }
-    if (row.provider === PARTIAL_AI_PROVIDER) {
-      const ageMs = Date.now() - row.updatedAt.getTime();
-      if (ageMs > PARTIAL_CACHE_TTL_MS) return null;
+    if (cache.provider === PARTIAL_AI_PROVIDER) {
+      return Math.max(0, PARTIAL_CACHE_TTL_MS - ageMs);
     }
-    return { adjustments: row.aiAdjustments, provider: row.provider };
+    return null;
   }
 
   private async requestAiAdjustments(
@@ -526,6 +726,7 @@ export class UniversityMatchService {
     calibrationLevel: number,
     request: UniversityMatchRequest,
     cacheKey: string,
+    existingAdjustments: Record<string, ValidatedAiAdjustment> = {},
   ): Promise<{
     adjustments: Record<string, ValidatedAiAdjustment>;
     provider: string;
@@ -547,13 +748,29 @@ export class UniversityMatchService {
       return null;
     }
 
+    // Un reintento continúa desde la fotografía parcial ya publicada. Así no
+    // borra explicaciones visibles ni vuelve a cobrar por candidatas resueltas.
+    const combined: Record<string, ValidatedAiAdjustment> = {
+      ...existingAdjustments,
+    };
+    const pendingCandidates = aiCandidates.filter(
+      (candidate) => !combined[candidate.universityId],
+    );
+    if (!pendingCandidates.length) {
+      await this.upsertCache(userId, cacheKey, combined, 'Groq');
+      return { adjustments: combined, provider: 'Groq' };
+    }
+
     const batches: UniversityCandidate[][] = [];
-    for (let index = 0; index < aiCandidates.length; index += AI_BATCH_SIZE) {
-      batches.push(aiCandidates.slice(index, index + AI_BATCH_SIZE));
+    for (
+      let index = 0;
+      index < pendingCandidates.length;
+      index += AI_BATCH_SIZE
+    ) {
+      batches.push(pendingCandidates.slice(index, index + AI_BATCH_SIZE));
     }
 
     const startTime = Date.now();
-    const combined: Record<string, ValidatedAiAdjustment> = {};
     const batchErrors: string[] = [];
     let totalTokens = 0;
     let successfulBatches = 0;
@@ -601,6 +818,18 @@ export class UniversityMatchService {
             batchErrors.push(detail);
             this.logger.error(`A8: un lote de Groq falló: ${detail}`);
           }
+        }
+
+        // Publica el avance al terminar CADA oleada. Así el polling recibe
+        // nuevas explicaciones mientras el resto continúa, y un reinicio no
+        // pierde todo lo que ya respondió el proveedor.
+        if (Object.keys(combined).length) {
+          await this.upsertCache(
+            userId,
+            cacheKey,
+            combined,
+            PARTIAL_AI_PROVIDER,
+          );
         }
       }
     };
@@ -660,6 +889,14 @@ export class UniversityMatchService {
       totalTokens,
       'Groq',
     );
+
+    if (Object.keys(combined).length) {
+      // Un proveedor caído durante el reintento no debe borrar el avance que
+      // el alumno ya estaba viendo. Conservamos la fotografía y aplicamos un
+      // nuevo backoff parcial antes del siguiente intento automático.
+      await this.upsertCache(userId, cacheKey, combined, PARTIAL_AI_PROVIDER);
+      return { adjustments: combined, provider: PARTIAL_AI_PROVIDER };
+    }
 
     // Degradación limpia: ranking 100% determinista (matchScore = baseScore).
     // Se cachea con TTL corto (FALLBACK_CACHE_TTL_MS) para que los clicks de
@@ -775,7 +1012,6 @@ export class UniversityMatchService {
       })),
       filters: {
         maxDistanceKm: request.filters.maxDistanceKm,
-        costPreference: request.filters.costPreference,
       },
       candidateUniversities: candidates.map((c) => ({
         universityId: c.universityId,

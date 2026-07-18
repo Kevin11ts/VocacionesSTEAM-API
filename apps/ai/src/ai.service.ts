@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Like, MoreThan, Repository } from 'typeorm';
 import Groq from 'groq-sdk';
 import { AiLog, University } from '@app/common';
 import { haversineKm } from './university-match.engine';
@@ -15,6 +15,40 @@ import {
   verifyProgramsAgainstOfficialPages,
 } from './program-verification';
 
+export type UniversityWithDistance = University & { distanceKm: number };
+
+export interface NearbyDiscoverySnapshot {
+  universities: UniversityWithDistance[];
+  processing: boolean;
+  /** true cuando la zona alcanzó la cobertura útil objetivo. */
+  complete: boolean;
+  coverageCount: number;
+  verifiedCount: number;
+  startedAt?: string;
+  updatedAt: string;
+  /** Próximo momento en que un snapshot incompleto puede iniciar otra tanda. */
+  retryAt?: string;
+  error?: string;
+}
+
+interface NearbyDiscoveryJobState {
+  processing: boolean;
+  /** No quedan fichas accionables aunque la zona tenga menos de 15 campus. */
+  settled?: boolean;
+  startedAt: string;
+  updatedAt: string;
+  cooldownUntil: number;
+  deferredUntil?: number;
+  error?: string;
+  promise?: Promise<void>;
+}
+
+interface NearbyDiscoveryRoundOutcome {
+  attempted: number;
+  /** Trabajo real pendiente que todavía está en backoff o sin proveedor. */
+  deferredUntil?: number;
+}
+
 /**
  * Servicio del microservicio de IA.
  *
@@ -27,6 +61,23 @@ import {
 export class AiService {
   private readonly logger = new Logger(AiService.name);
   private readonly groq: Groq | null;
+  /** Un trabajo por zona/radio; evita que cada polling o cada usuario duplique IA. */
+  private readonly nearbyDiscoveryJobs = new Map<
+    string,
+    NearbyDiscoveryJobState
+  >();
+  /** Evita enriquecer la misma ficha desde radios/zonas solapados. */
+  private readonly universityEnrichmentJobs = new Map<string, Promise<void>>();
+  /** Serializa la deduplicación+alta de Places para no insertar el mismo campus dos veces. */
+  private nearbyCreationQueue: Promise<void> = Promise.resolve();
+  /** Reserva Place IDs solo durante su validación; otros lugares siguen en paralelo. */
+  private readonly nearbyPlaceReservations = new Map<
+    string,
+    { promise: Promise<void>; release: () => void }
+  >();
+  /** Caché negativo persistido en ai_logs para no revalidar lugares descartados. */
+  private readonly rejectedPlaceIds = new Map<string, number>();
+  private rejectedPlacesHydratedUntil = 0;
 
   constructor(
     private readonly configService: ConfigService,
@@ -104,7 +155,7 @@ export class AiService {
     lng: number,
     radiusKm = 30,
     limit = 40,
-  ): Promise<(University & { distanceKm: number })[]> {
+  ): Promise<UniversityWithDistance[]> {
     if (
       typeof lat !== 'number' ||
       typeof lng !== 'number' ||
@@ -116,7 +167,37 @@ export class AiService {
     const safeLimit = Number.isFinite(limit)
       ? Math.min(Math.max(Math.trunc(limit), 1), 250)
       : 40;
-    const all = await this.universityRepository.find();
+    const safeRadiusKm = Number.isFinite(radiusKm)
+      ? Math.max(1, Math.min(radiusKm, 50))
+      : 30;
+
+    // El polling no debe descargar y deserializar toda la tabla cada 5 s.
+    // Postgres reduce primero a un bounding box; Haversine conserva abajo el
+    // filtro circular exacto. El fallback existe solo para repositorios mock.
+    const repository = this.universityRepository as Repository<University> & {
+      createQueryBuilder?: Repository<University>['createQueryBuilder'];
+    };
+    let all: University[];
+    if (typeof repository.createQueryBuilder === 'function') {
+      const latitudeDelta = safeRadiusKm / 110.574;
+      const longitudeDelta =
+        safeRadiusKm /
+        (111.32 * Math.max(Math.abs(Math.cos((lat * Math.PI) / 180)), 0.01));
+      all = await repository
+        .createQueryBuilder('university')
+        .where('university.location IS NOT NULL')
+        .andWhere(
+          `(university.location ->> 'latitude')::double precision BETWEEN :minLat AND :maxLat`,
+          { minLat: lat - latitudeDelta, maxLat: lat + latitudeDelta },
+        )
+        .andWhere(
+          `(university.location ->> 'longitude')::double precision BETWEEN :minLng AND :maxLng`,
+          { minLng: lng - longitudeDelta, maxLng: lng + longitudeDelta },
+        )
+        .getMany();
+    } else {
+      all = await this.universityRepository.find();
+    }
     return all
       .filter(
         (u) =>
@@ -141,7 +222,7 @@ export class AiService {
           { lat: u.location.latitude, lng: u.location.longitude },
         ),
       }))
-      .filter((u) => u.distanceKm <= radiusKm)
+      .filter((u) => u.distanceKm <= safeRadiusKm)
       .sort((a, b) => a.distanceKm - b.distanceKm)
       .slice(0, safeLimit);
   }
@@ -154,20 +235,36 @@ export class AiService {
   private static readonly MIN_ZONE_COVERAGE = 15;
 
   /**
-   * Presupuesto de trabajos con IA por request síncrono (existentes a
+   * Presupuesto de trabajos con IA por trabajo de zona (existentes a
    * enriquecer + nuevos a validar). Se procesan en chunks paralelos de
    * ENRICH_CHUNK_SIZE: 12 trabajos ≈ 4 oleadas × ~10-12s. Cada prompt se
    * mantiene corto para respetar también límites por tokens del proveedor.
-   * peor caso — dentro del timeout del proxy de Railway, y respetando el
-   * rate limit de Groq (no 12 llamadas simultáneas).
+   * El peor caso ya no bloquea la respuesta HTTP; el tamaño de tanda sigue
+   * respetando el rate limit de Groq (no 12 llamadas simultáneas).
    */
-  private static readonly MAX_SYNC_ENRICH = 12;
+  private static readonly MAX_NEARBY_ENRICH_PER_JOB = 12;
   private static readonly ENRICH_CHUNK_SIZE = 3;
+  /** Un solo job avanza hasta 36 fichas; no depende de una visita posterior. */
+  private static readonly MAX_NEARBY_ROUNDS_PER_JOB = 3;
+
+  /** Una zona incompleta no se vuelve a procesar en cada entrada del alumno. */
+  private static readonly NEARBY_DISCOVERY_COOLDOWN_MS = 30 * 60 * 1000;
+  /** Una zona agotada se considera completa por un día aunque tenga <15 campus reales. */
+  private static readonly NEARBY_SETTLED_COOLDOWN_MS = 24 * 60 * 60 * 1000;
+  /** Un fallo sí admite reintento manual, pero nunca en un bucle de clicks. */
+  private static readonly NEARBY_ERROR_FORCE_RETRY_MS = 30 * 1000;
+
+  /** Sitios que ya fallaron descansan antes de volver a consumir Places/Groq. */
+  private static readonly ENRICH_FAILURE_RETRY_MS = 6 * 60 * 60 * 1000;
+  /** Un lugar confirmado como no-universidad no vuelve a consumir IA por 30 días. */
+  private static readonly REJECTED_PLACE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+  private static readonly REJECTED_PLACE_CACHE_REFRESH_MS = 5 * 60 * 1000;
 
   /**
    * "Cerca de ti" (Explorar) y el mapa: BD propia como fuente principal; si
    * la zona tiene poca cobertura (<MIN_ZONE_COVERAGE), el pipeline hace DOS
-   * cosas con un presupuesto compartido de MAX_SYNC_ENRICH trabajos de IA:
+   * cosas con un presupuesto compartido de MAX_NEARBY_ENRICH_PER_JOB trabajos
+   * de IA:
    *
    *   1. ENRIQUECE universidades EXISTENTES de la zona sin steamPrograms
    *      (con website directo, o consiguiéndolo vía Place Details si tienen
@@ -180,19 +277,212 @@ export class AiService {
    * Todo queda persistido: la siguiente visita a la zona responde al
    * instante sin volver a preguntarle a Places ni a la IA por lo mismo.
    *
-   * Síncrono a propósito (decisión del producto): el usuario espera. Los
-   * trabajos corren en chunks paralelos de ENRICH_CHUNK_SIZE para caber en
-   * el timeout del proxy sin martillar el rate limit de Groq. Lo que no
-   * quepa en el presupuesto no se pierde: la próxima búsqueda en la zona
-   * procesa el siguiente lote.
+   * La petición devuelve de inmediato la fotografía disponible en BD. El
+   * enriquecimiento continúa en segundo plano y las consultas siguientes
+   * reciben esa fotografía actualizada junto con `processing`. Un lock por
+   * zona/radio evita duplicar el mismo trabajo y un cooldown evita usar cada
+   * entrada del alumno como disparador de IA.
    */
   async findOrDiscoverNearby(
     lat: number,
     lng: number,
     radiusKm = 30,
-  ): Promise<(University & { distanceKm: number })[]> {
-    const dbNearby = await this.getNearbyUniversities(lat, lng, radiusKm);
+    forceRefresh = false,
+  ): Promise<NearbyDiscoverySnapshot> {
+    const safeRadiusKm = Math.max(1, Math.min(radiusKm, 50));
+    const dbNearby = await this.getNearbyUniversities(lat, lng, safeRadiusKm);
+    const verifiedCount = this.countVerifiedUniversities(dbNearby);
+    const needsMoreCoverage = dbNearby.length < AiService.MIN_ZONE_COVERAGE;
+    const needsEnrichment = verifiedCount < AiService.MIN_ZONE_COVERAGE;
+    const jobKey = this.buildNearbyJobKey(lat, lng, safeRadiusKm);
+    const now = Date.now();
+    let state = this.nearbyDiscoveryJobs.get(jobKey);
 
+    // Las entradas completadas solo se conservan durante el cooldown. Después
+    // se pueden recolectar y, si la zona sigue incompleta, iniciar otra tanda.
+    if (state && !state.processing && state.cooldownUntil <= now) {
+      this.nearbyDiscoveryJobs.delete(jobKey);
+      state = undefined;
+    }
+
+    const forceCanRetryError =
+      !!forceRefresh &&
+      !!state?.error &&
+      now - Date.parse(state.updatedAt) >=
+        AiService.NEARBY_ERROR_FORCE_RETRY_MS;
+    const canStart =
+      !state?.processing &&
+      (!state || state.cooldownUntil <= now || forceCanRetryError) &&
+      (forceRefresh || needsMoreCoverage || needsEnrichment);
+    if (canStart) {
+      state = this.startNearbyDiscoveryJob(jobKey, lat, lng, safeRadiusKm);
+    }
+
+    return this.buildNearbySnapshot(dbNearby, verifiedCount, state);
+  }
+
+  private buildNearbyJobKey(
+    lat: number,
+    lng: number,
+    radiusKm: number,
+  ): string {
+    // Dos decimales agrupan puntos a ~1 km: suficientemente estable ante el
+    // ruido normal del GPS sin mezclar ciudades distintas.
+    return `${lat.toFixed(2)}:${lng.toFixed(2)}:${Math.round(radiusKm)}`;
+  }
+
+  private countVerifiedUniversities(
+    universities: UniversityWithDistance[],
+  ): number {
+    return universities.filter(
+      (university) => recommendationPrograms(university).length,
+    ).length;
+  }
+
+  private buildNearbySnapshot(
+    universities: UniversityWithDistance[],
+    verifiedCount: number,
+    state?: NearbyDiscoveryJobState,
+  ): NearbyDiscoverySnapshot {
+    const newestUniversityUpdate = universities.reduce((latest, university) => {
+      const value = university.updatedAt?.getTime() ?? 0;
+      return Math.max(latest, value);
+    }, 0);
+    const stateUpdate = state ? Date.parse(state.updatedAt) : 0;
+    const latestUpdate = Math.max(newestUniversityUpdate, stateUpdate);
+    const updatedAt = new Date(latestUpdate || Date.now()).toISOString();
+    const complete =
+      verifiedCount >= AiService.MIN_ZONE_COVERAGE || state?.settled === true;
+    const includeRetryAt =
+      !!state &&
+      !state.processing &&
+      Number.isFinite(state.cooldownUntil) &&
+      (!complete || !!state.error);
+
+    return {
+      universities,
+      processing: state?.processing === true,
+      complete,
+      coverageCount: universities.length,
+      verifiedCount,
+      ...(state?.startedAt ? { startedAt: state.startedAt } : {}),
+      updatedAt,
+      ...(includeRetryAt
+        ? { retryAt: new Date(state.cooldownUntil).toISOString() }
+        : {}),
+      ...(state?.error ? { error: state.error } : {}),
+    };
+  }
+
+  private startNearbyDiscoveryJob(
+    jobKey: string,
+    lat: number,
+    lng: number,
+    radiusKm: number,
+  ): NearbyDiscoveryJobState {
+    const startedAt = new Date().toISOString();
+    const state: NearbyDiscoveryJobState = {
+      processing: true,
+      startedAt,
+      updatedAt: startedAt,
+      cooldownUntil: Number.POSITIVE_INFINITY,
+    };
+    this.nearbyDiscoveryJobs.set(jobKey, state);
+
+    state.promise = this.processNearbyDiscovery(lat, lng, radiusKm)
+      .then((outcome) => {
+        state.settled = outcome?.settled === true;
+        state.deferredUntil = outcome?.deferredUntil;
+      })
+      .catch((error) => {
+        state.settled = false;
+        state.deferredUntil = undefined;
+        state.error = error instanceof Error ? error.message : String(error);
+        this.logger.error(
+          `Pipeline de universidades cercanas falló (${jobKey}): ${state.error}`,
+        );
+      })
+      .finally(() => {
+        state.processing = false;
+        state.updatedAt = new Date().toISOString();
+        const cooldownMs = state.settled
+          ? AiService.NEARBY_SETTLED_COOLDOWN_MS
+          : AiService.NEARBY_DISCOVERY_COOLDOWN_MS;
+        state.cooldownUntil = Math.max(
+          Date.now() + cooldownMs,
+          state.deferredUntil ?? 0,
+        );
+        state.promise = undefined;
+        const cleanupDelay = Math.max(
+          1_000,
+          state.cooldownUntil - Date.now() + 1_000,
+        );
+        const cleanupTimer = setTimeout(() => {
+          const current = this.nearbyDiscoveryJobs.get(jobKey);
+          if (current === state && !current.processing) {
+            this.nearbyDiscoveryJobs.delete(jobKey);
+          }
+        }, cleanupDelay);
+        cleanupTimer.unref?.();
+      });
+
+    return state;
+  }
+
+  /** Trabajo pesado desacoplado de la respuesta HTTP de nearby-discover. */
+  private async processNearbyDiscovery(
+    lat: number,
+    lng: number,
+    radiusKm: number,
+  ): Promise<{ settled: boolean; deferredUntil?: number }> {
+    const attemptedPlaceIds = new Set<string>();
+
+    for (let round = 0; round < AiService.MAX_NEARBY_ROUNDS_PER_JOB; round++) {
+      const dbNearby = await this.getNearbyUniversities(lat, lng, radiusKm);
+      const withPrograms = this.countVerifiedUniversities(dbNearby);
+      const needsMoreCoverage = dbNearby.length < AiService.MIN_ZONE_COVERAGE;
+      const needsEnrichment = withPrograms < AiService.MIN_ZONE_COVERAGE;
+      if (!needsMoreCoverage && !needsEnrichment) return { settled: true };
+
+      // Aunque una ronda no aumente `withPrograms`, se continúa: pudo haber
+      // marcado sitios fallidos con backoff y la siguiente ronda debe avanzar
+      // hacia otras fichas en vez de depender de una visita futura.
+      const outcome = await this.processNearbyDiscoveryRound(
+        lat,
+        lng,
+        radiusKm,
+        dbNearby,
+        needsMoreCoverage,
+        needsEnrichment,
+        attemptedPlaceIds,
+      );
+      // Tras una ronda anterior, cero trabajo significa que no quedan sitios
+      // ni fichas pendientes. Una región rural no debe perseguir para siempre
+      // una meta artificial de 15 universidades.
+      if (outcome.attempted === 0) {
+        return outcome.deferredUntil
+          ? { settled: false, deferredUntil: outcome.deferredUntil }
+          : { settled: true };
+      }
+    }
+
+    const finalSnapshot = await this.getNearbyUniversities(lat, lng, radiusKm);
+    return {
+      settled:
+        this.countVerifiedUniversities(finalSnapshot) >=
+        AiService.MIN_ZONE_COVERAGE,
+    };
+  }
+
+  private async processNearbyDiscoveryRound(
+    lat: number,
+    lng: number,
+    radiusKm: number,
+    dbNearby: UniversityWithDistance[],
+    needsMoreCoverage: boolean,
+    needsEnrichment: boolean,
+    attemptedPlaceIds: Set<string>,
+  ): Promise<NearbyDiscoveryRoundOutcome> {
     // Dos gates independientes: "cuántas hay" (activa descubrir nuevas en
     // Places) y "cuántas SIRVEN" — tienen programas verificados, o sea
     // activan A8 y muestran ficha completa (activa enriquecer existentes).
@@ -202,22 +492,22 @@ export class AiService {
     // retornaba de inmediato y el enriquecimiento NUNCA se disparaba —
     // aunque casi ninguno tuviera programas. Ver findOrDiscoverNearby en el
     // plan de corrección para el detalle del bug.
-    const withPrograms = dbNearby.filter(
-      (u) => recommendationPrograms(u).length,
-    ).length;
-    const needsMoreCoverage = dbNearby.length < AiService.MIN_ZONE_COVERAGE;
-    const needsEnrichment = withPrograms < AiService.MIN_ZONE_COVERAGE;
-    if (!needsMoreCoverage && !needsEnrichment) return dbNearby;
-
     const apiKey = this.configService.get<string>('GOOGLE_PLACES_API_KEY');
-    let budget = AiService.MAX_SYNC_ENRICH;
+    let budget = AiService.MAX_NEARBY_ENRICH_PER_JOB;
+    let attempted = 0;
+    let deferredUntil: number | undefined;
+    const deferUntil = (timestamp: number): void => {
+      deferredUntil = deferredUntil
+        ? Math.min(deferredUntil, timestamp)
+        : timestamp;
+    };
     // Cuando la zona aún tiene pocas instituciones, se reserva la mitad del
     // presupuesto para descubrir nuevas. Antes los registros incompletos
     // consumían siempre los 12 lugares y Places nunca llegaba a ejecutarse;
     // por eso ampliar de 10 a 30/50 km mostraba exactamente la misma lista.
     const discoveryReserve =
       needsMoreCoverage && apiKey
-        ? Math.floor(AiService.MAX_SYNC_ENRICH / 2)
+        ? Math.floor(AiService.MAX_NEARBY_ENRICH_PER_JOB / 2)
         : 0;
 
     // ── 1) Existentes sin oferta verificada: enriquecerlas primero ─────────
@@ -234,14 +524,45 @@ export class AiService {
     // dirección cuando falta (findPlaceId), así que basta con requerir
     // `location` (siempre presente, es requisito para aparecer en "cerca de
     // ti") y que haya API key para poder buscar en Places.
+    const unverified = dbNearby.filter(
+      (university) =>
+        !university.programsVerifiedAt &&
+        !university.programsVerificationSource &&
+        !(university.source === 'manual' && university.steamPrograms?.length),
+    );
+    const recentFailures = unverified.filter((university) =>
+      this.hasRecentEnrichmentFailure(university),
+    );
+    for (const university of recentFailures) {
+      if (university.aiEnrichedAt) {
+        deferUntil(
+          university.aiEnrichedAt.getTime() + AiService.ENRICH_FAILURE_RETRY_MS,
+        );
+      }
+    }
+    const providerRetryAt = Date.now() + AiService.NEARBY_DISCOVERY_COOLDOWN_MS;
+    if (needsEnrichment && !this.groq && unverified.length) {
+      deferUntil(providerRetryAt);
+    }
+    if (
+      needsEnrichment &&
+      !apiKey &&
+      unverified.some(
+        (university) =>
+          !university.website?.trim() &&
+          !this.hasRecentEnrichmentFailure(university),
+      )
+    ) {
+      deferUntil(providerRetryAt);
+    }
+    if (needsMoreCoverage && !apiKey) deferUntil(providerRetryAt);
+
     if (needsEnrichment && this.groq && budget > 0) {
       const enrichmentBudget = budget - discoveryReserve;
-      const toEnrich = dbNearby
+      const toEnrich = unverified
         .filter(
           (u) =>
-            !u.programsVerifiedAt &&
-            !u.programsVerificationSource &&
-            !(u.source === 'manual' && u.steamPrograms?.length) &&
+            !this.hasRecentEnrichmentFailure(u) &&
             (u.website?.trim() || apiKey),
         )
         // No repetir eternamente el mismo primer lote: nunca verificadas
@@ -254,9 +575,10 @@ export class AiService {
         })
         .slice(0, enrichmentBudget);
       budget -= toEnrich.length;
+      attempted += toEnrich.length;
 
       await this.runInChunks(toEnrich, AiService.ENRICH_CHUNK_SIZE, (u) =>
-        this.enrichExistingUniversity(u, apiKey),
+        this.enrichExistingUniversityOnce(u, apiKey),
       );
     }
 
@@ -264,10 +586,29 @@ export class AiService {
     // Solo si de verdad hace falta MÁS cantidad — si ya hay suficientes en
     // BD, no tiene sentido gastar cuota de Places en encontrar más.
     if (needsMoreCoverage && apiKey && budget > 0) {
-      await this.discoverNewNearby(lat, lng, radiusKm, apiKey, budget);
+      attempted += await this.discoverNewNearby(
+        lat,
+        lng,
+        radiusKm,
+        apiKey,
+        budget,
+        attemptedPlaceIds,
+      );
     }
+    return { attempted, ...(deferredUntil ? { deferredUntil } : {}) };
+  }
 
-    return this.getNearbyUniversities(lat, lng, radiusKm);
+  private hasRecentEnrichmentFailure(university: University): boolean {
+    if (
+      university.aiEnrichmentStatus !== 'failed' ||
+      !university.aiEnrichedAt
+    ) {
+      return false;
+    }
+    return (
+      Date.now() - university.aiEnrichedAt.getTime() <
+      AiService.ENRICH_FAILURE_RETRY_MS
+    );
   }
 
   /** Corre `worker` sobre `items` en tandas paralelas de tamaño `size` (los errores ya los maneja cada worker). */
@@ -305,6 +646,24 @@ export class AiService {
       );
       await this.markEnrichmentFailure(uni, err);
     }
+  }
+
+  private enrichExistingUniversityOnce(
+    university: University,
+    apiKey?: string,
+  ): Promise<void> {
+    const active = this.universityEnrichmentJobs.get(university.id);
+    if (active) return active;
+
+    const job = this.enrichExistingUniversity(university, apiKey).finally(
+      () => {
+        if (this.universityEnrichmentJobs.get(university.id) === job) {
+          this.universityEnrichmentJobs.delete(university.id);
+        }
+      },
+    );
+    this.universityEnrichmentJobs.set(university.id, job);
+    return job;
   }
 
   /**
@@ -436,8 +795,10 @@ export class AiService {
           : String(error || 'Error desconocido');
       uni.aiEnrichmentStatus = 'failed';
       uni.aiEnrichmentError = message.slice(0, 1000);
+      uni.aiEnrichedAt = new Date();
       // save() actualiza updatedAt; el orden por updatedAt hace que el
-      // siguiente request avance a otras universidades antes de reintentar.
+      // siguiente trabajo avance a otras universidades. aiEnrichedAt aplica
+      // además un backoff para no reintentar este sitio en cada entrada.
       await this.universityRepository.save(uni);
     } catch {
       /* si ni el diagnóstico se puede guardar, nada que hacer */
@@ -456,10 +817,12 @@ export class AiService {
     radiusKm: number,
     apiKey: string,
     budget: number,
-  ): Promise<void> {
+    attemptedPlaceIds: Set<string> = new Set(),
+  ): Promise<number> {
     const radiusMeters = Math.min(radiusKm, 50) * 1000;
     const seenPlaceIds = new Set<string>();
     const rawCandidates: any[] = [];
+    const searchErrors: string[] = [];
 
     for (const term of AiService.SEARCH_TERMS) {
       let results: any[] = [];
@@ -472,6 +835,7 @@ export class AiService {
           term,
         );
       } catch (err) {
+        searchErrors.push(err instanceof Error ? err.message : String(err));
         this.logger.error(
           `Nearby discovery falló ("${term}"): ${err.message || err}`,
         );
@@ -485,93 +849,211 @@ export class AiService {
         ) {
           continue;
         }
+        if (attemptedPlaceIds.has(place.place_id)) continue;
         if (seenPlaceIds.has(place.place_id)) continue;
         seenPlaceIds.add(place.place_id);
         rawCandidates.push(place);
       }
     }
-    if (!rawCandidates.length) return;
-
-    // Dedupe determinista contra TODA la BD + contra el propio lote, por
-    // ubicación física (<150m) — mismo criterio que discoverUniversities().
-    const existing = await this.universityRepository.find({
-      select: ['location'],
-    });
-    const locationIndex = this.buildLocationIndex(
-      existing
-        .map((u) => u.location)
-        .filter((l): l is { latitude: number; longitude: number } => !!l),
+    if (
+      !rawCandidates.length &&
+      searchErrors.length === AiService.SEARCH_TERMS.length
+    ) {
+      throw new Error(`Google Places no estuvo disponible: ${searchErrors[0]}`);
+    }
+    if (!rawCandidates.length) return 0;
+    const rejectedPlaceIds = await this.getRecentlyRejectedPlaceIds(
+      rawCandidates.map((place) => place.place_id),
     );
+    const eligibleRawCandidates = rawCandidates.filter(
+      (place) => !rejectedPlaceIds.has(place.place_id),
+    );
+    if (!eligibleRawCandidates.length) return 0;
 
-    const newCandidates: {
+    type Candidate = {
       place: any;
       loc: { latitude: number; longitude: number };
       distanceKm: number;
-    }[] = [];
-    for (const place of rawCandidates) {
-      const loc =
-        typeof place.geometry?.location?.lat === 'number' &&
-        typeof place.geometry?.location?.lng === 'number'
-          ? {
-              latitude: place.geometry.location.lat,
-              longitude: place.geometry.location.lng,
+    };
+
+    // El lock global solo cubre la reserva/dedupe rápida en BD. Las llamadas
+    // lentas a sitios oficiales, Places Details y Groq corren después por
+    // Place ID, así una ciudad no congela el descubrimiento de todas las demás.
+    const reservation = await this.runWithNearbyCreationLock(async () => {
+      const existing = await this.universityRepository.find({
+        select: ['location', 'googlePlaceId'],
+      });
+      const existingPlaceIds = new Set(
+        existing
+          .map((university) => university.googlePlaceId)
+          .filter((placeId): placeId is string => !!placeId),
+      );
+      const locationIndex = this.buildLocationIndex(
+        existing
+          .map((u) => u.location)
+          .filter((l): l is { latitude: number; longitude: number } => !!l),
+      );
+
+      const newCandidates: Candidate[] = [];
+      const waits: Promise<void>[] = [];
+      for (const place of eligibleRawCandidates) {
+        if (existingPlaceIds.has(place.place_id)) continue;
+        const activeReservation = this.nearbyPlaceReservations.get(
+          place.place_id,
+        );
+        if (activeReservation) {
+          waits.push(activeReservation.promise);
+          continue;
+        }
+        const loc =
+          typeof place.geometry?.location?.lat === 'number' &&
+          typeof place.geometry?.location?.lng === 'number'
+            ? {
+                latitude: place.geometry.location.lat,
+                longitude: place.geometry.location.lng,
+              }
+            : undefined;
+        if (!loc) continue;
+        if (this.isNearIndexedLocation(locationIndex, loc)) continue;
+        this.addToLocationIndex(locationIndex, loc);
+        newCandidates.push({
+          place,
+          loc,
+          distanceKm: haversineKm(
+            { lat, lng },
+            { lat: loc.latitude, lng: loc.longitude },
+          ),
+        });
+      }
+
+      // Presupuesto: solo los más cercanos se validan/enriquecen en esta visita.
+      const toProcess = newCandidates
+        .sort((a, b) => a.distanceKm - b.distanceKm)
+        .slice(0, budget);
+      for (const { place } of toProcess) {
+        attemptedPlaceIds.add(place.place_id);
+        let release!: () => void;
+        const promise = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        this.nearbyPlaceReservations.set(place.place_id, {
+          promise,
+          release,
+        });
+      }
+      return { toProcess, waits };
+    });
+
+    if (!reservation.toProcess.length) {
+      // Otra zona ya está validando los mismos campus. Esperarla evita marcar
+      // esta zona como agotada justo antes de que aparezcan sus nuevas filas.
+      if (reservation.waits.length) {
+        await Promise.allSettled(reservation.waits);
+        return 1;
+      }
+      return 0;
+    }
+
+    try {
+      const newRows: Partial<University>[] = [];
+      await this.runInChunks(
+        reservation.toProcess,
+        AiService.ENRICH_CHUNK_SIZE,
+        async ({ place, loc }) => {
+          const row = await this.validateNewCandidate(place, loc, apiKey);
+          if (row) newRows.push(row);
+        },
+      );
+
+      // Los candidatos SIN website no pasaron por la validación completa (no
+      // hay sitio que leer) — antes se guardaban directo como 'unverified' y
+      // por ahí se colaban prepas/secundarias. Ahora una sola llamada barata a
+      // la IA clasifica ese lote POR NOMBRE y descarta lo que claramente no es
+      // educación superior.
+      const withSite = newRows.filter((r) => r.website);
+      const nameOnly = newRows.filter((r) => !r.website);
+      let accepted = withSite;
+      if (nameOnly.length) {
+        const rejected = await this.classifyNonUniversitiesByName(
+          nameOnly.map((r) => r.name!),
+        );
+        for (const r of nameOnly) {
+          if (rejected.has(this.normalizeName(r.name!))) {
+            await this.logAiDiscard(
+              r.name!,
+              'name_classification',
+              r.googlePlaceId,
+            );
+          }
+        }
+        accepted = [
+          ...withSite,
+          ...nameOnly.filter((r) => !rejected.has(this.normalizeName(r.name!))),
+        ];
+      }
+
+      if (accepted.length) {
+        await this.runWithNearbyCreationLock(async () => {
+          // Revalidación corta justo antes del insert: otro Place ID puede
+          // representar el mismo campus físico y haber terminado en paralelo.
+          const existing = await this.universityRepository.find({
+            select: ['location', 'googlePlaceId'],
+          });
+          const existingPlaceIds = new Set(
+            existing
+              .map((university) => university.googlePlaceId)
+              .filter((placeId): placeId is string => !!placeId),
+          );
+          const locationIndex = this.buildLocationIndex(
+            existing
+              .map((university) => university.location)
+              .filter(
+                (
+                  location,
+                ): location is {
+                  latitude: number;
+                  longitude: number;
+                } => !!location,
+              ),
+          );
+          const uniqueRows = accepted.filter((row) => {
+            if (row.googlePlaceId && existingPlaceIds.has(row.googlePlaceId)) {
+              return false;
             }
-          : undefined;
-      if (!loc) continue;
-      if (this.isNearIndexedLocation(locationIndex, loc)) continue; // ya existe en BD o ya visto en este lote
-      this.addToLocationIndex(locationIndex, loc);
-      newCandidates.push({
-        place,
-        loc,
-        distanceKm: haversineKm(
-          { lat, lng },
-          { lat: loc.latitude, lng: loc.longitude },
-        ),
+            if (!row.location) return false;
+            if (this.isNearIndexedLocation(locationIndex, row.location)) {
+              return false;
+            }
+            this.addToLocationIndex(locationIndex, row.location);
+            if (row.googlePlaceId) existingPlaceIds.add(row.googlePlaceId);
+            return true;
+          });
+          if (uniqueRows.length) {
+            await this.bulkCreateUniversities(uniqueRows);
+          }
+        });
+      }
+      return reservation.toProcess.length;
+    } finally {
+      await this.runWithNearbyCreationLock(async () => {
+        for (const { place } of reservation.toProcess) {
+          const active = this.nearbyPlaceReservations.get(place.place_id);
+          active?.release();
+          this.nearbyPlaceReservations.delete(place.place_id);
+        }
       });
     }
-    if (!newCandidates.length) return;
+  }
 
-    // Presupuesto: solo los más cercanos se validan/enriquecen en esta visita.
-    const toProcess = newCandidates
-      .sort((a, b) => a.distanceKm - b.distanceKm)
-      .slice(0, budget);
-
-    const newRows: Partial<University>[] = [];
-    await this.runInChunks(
-      toProcess,
-      AiService.ENRICH_CHUNK_SIZE,
-      async ({ place, loc }) => {
-        const row = await this.validateNewCandidate(place, loc, apiKey);
-        if (row) newRows.push(row);
-      },
+  private async runWithNearbyCreationLock<T>(
+    worker: () => Promise<T>,
+  ): Promise<T> {
+    const run = this.nearbyCreationQueue.then(worker, worker);
+    this.nearbyCreationQueue = run.then(
+      () => undefined,
+      () => undefined,
     );
-
-    // Los candidatos SIN website no pasaron por la validación completa (no
-    // hay sitio que leer) — antes se guardaban directo como 'unverified' y
-    // por ahí se colaban prepas/secundarias. Ahora una sola llamada barata a
-    // la IA clasifica ese lote POR NOMBRE y descarta lo que claramente no es
-    // educación superior.
-    const withSite = newRows.filter((r) => r.website);
-    const nameOnly = newRows.filter((r) => !r.website);
-    let accepted = withSite;
-    if (nameOnly.length) {
-      const rejected = await this.classifyNonUniversitiesByName(
-        nameOnly.map((r) => r.name!),
-      );
-      for (const r of nameOnly) {
-        if (rejected.has(this.normalizeName(r.name!))) {
-          await this.logAiDiscard(r.name!, 'name_classification');
-        }
-      }
-      accepted = [
-        ...withSite,
-        ...nameOnly.filter((r) => !rejected.has(this.normalizeName(r.name!))),
-      ];
-    }
-
-    if (accepted.length) {
-      await this.bulkCreateUniversities(accepted);
-    }
+    return run;
   }
 
   /**
@@ -653,8 +1135,17 @@ SALIDA (JSON estricto, sin texto extra):
 
     if (!website || !this.groq) {
       // Sin sitio (o sin Groq configurado) no hay forma de validar/enriquecer:
-      // se guarda igual, igual de honesto que el descubrimiento admin de hoy.
-      return { ...base, institutionType: 'unverified' };
+      // se guarda igual, pero se registra el intento para que no se repita en
+      // cada visita del alumno.
+      return {
+        ...base,
+        institutionType: 'unverified',
+        aiEnrichedAt: new Date(),
+        aiEnrichmentStatus: 'failed',
+        aiEnrichmentError: !website
+          ? 'No se encontró un sitio oficial para verificar la oferta'
+          : 'Groq no está configurado para verificar la oferta',
+      };
     }
 
     const url = website.startsWith('http') ? website : `http://${website}`;
@@ -677,7 +1168,7 @@ SALIDA (JSON estricto, sin texto extra):
           : 'unverified';
 
       if (DISCARDED_INSTITUTION_TYPES.has(institutionType)) {
-        await this.logAiDiscard(place.name, institutionType);
+        await this.logAiDiscard(place.name, institutionType, place.place_id);
         return null; // no es una institución de educación superior real: se descarta
       }
 
@@ -728,6 +1219,7 @@ SALIDA (JSON estricto, sin texto extra):
         ...base,
         website: url,
         institutionType: 'unverified',
+        aiEnrichedAt: new Date(),
         aiEnrichmentStatus: 'failed',
         aiEnrichmentError:
           err instanceof Error
@@ -740,12 +1232,21 @@ SALIDA (JSON estricto, sin texto extra):
   private async logAiDiscard(
     name: string,
     institutionType: string,
+    googlePlaceId?: string,
   ): Promise<void> {
+    if (googlePlaceId) {
+      this.rejectedPlaceIds.set(
+        googlePlaceId,
+        Date.now() + AiService.REJECTED_PLACE_TTL_MS,
+      );
+    }
     try {
       await this.aiLogRepository.save(
         this.aiLogRepository.create({
           studentName: name,
-          detectedProfile: `descubrimiento cerca-de-ti: descartado (${institutionType})`,
+          detectedProfile:
+            `descubrimiento cerca-de-ti: descartado (${institutionType})` +
+            (googlePlaceId ? `; place_id=${googlePlaceId}` : ''),
           latency: 0,
           success: true,
           tokensConsumed: 0,
@@ -755,6 +1256,60 @@ SALIDA (JSON estricto, sin texto extra):
     } catch (err) {
       this.logger.error('Error guardando log de descarte', err);
     }
+  }
+
+  private async getRecentlyRejectedPlaceIds(
+    placeIds: string[],
+  ): Promise<Set<string>> {
+    const now = Date.now();
+    for (const [placeId, expiresAt] of this.rejectedPlaceIds) {
+      if (expiresAt <= now) this.rejectedPlaceIds.delete(placeId);
+    }
+
+    if (now >= this.rejectedPlacesHydratedUntil) {
+      this.rejectedPlacesHydratedUntil =
+        now + AiService.REJECTED_PLACE_CACHE_REFRESH_MS;
+      const repository = this.aiLogRepository as Repository<AiLog> & {
+        find?: Repository<AiLog>['find'];
+      };
+      if (typeof repository.find === 'function') {
+        try {
+          const logs = await repository.find({
+            select: ['detectedProfile', 'createdAt'],
+            where: {
+              detectedProfile: Like(
+                'descubrimiento cerca-de-ti: descartado%place_id=%',
+              ),
+              createdAt: MoreThan(
+                new Date(now - AiService.REJECTED_PLACE_TTL_MS),
+              ),
+            },
+          });
+          for (const log of logs) {
+            const placeId =
+              log.detectedProfile?.match(/place_id=([^;\s]+)/)?.[1];
+            const createdAt = log.createdAt?.getTime();
+            if (!placeId || !createdAt) continue;
+            this.rejectedPlaceIds.set(
+              placeId,
+              createdAt + AiService.REJECTED_PLACE_TTL_MS,
+            );
+          }
+        } catch (error) {
+          this.logger.warn(
+            `No se pudo hidratar el caché de lugares descartados: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          );
+        }
+      }
+    }
+
+    return new Set(
+      placeIds.filter(
+        (placeId) => (this.rejectedPlaceIds.get(placeId) ?? 0) > now,
+      ),
+    );
   }
 
   async createUniversity(data: Partial<University>): Promise<University> {
@@ -931,7 +1486,7 @@ SALIDA (JSON estricto, sin texto extra):
       }
 
       try {
-        const university = this.universityRepository.create({
+        const entityData: Partial<University> = {
           ...row,
           name,
           location: { latitude: lat, longitude: lng },
@@ -941,7 +1496,40 @@ SALIDA (JSON estricto, sin texto extra):
                 programsVerificationSource: 'admin',
               }
             : {}),
-        });
+        };
+        const manager = this.universityRepository.manager;
+        if (row.googlePlaceId && manager?.transaction) {
+          // El lock en memoria evita duplicados dentro de esta instancia; el
+          // advisory lock de Postgres cubre deploys solapados o varias réplicas
+          // sin arriesgar un índice UNIQUE sobre datos históricos ya duplicados.
+          const inserted = await manager.transaction(
+            async (transactionManager) => {
+              await transactionManager.query(
+                'SELECT pg_advisory_xact_lock(hashtext($1))',
+                [`university-place:${row.googlePlaceId}`],
+              );
+              const duplicate = await transactionManager.findOne(University, {
+                where: { googlePlaceId: row.googlePlaceId },
+              });
+              if (duplicate) return false;
+              const university = transactionManager.create(
+                University,
+                entityData,
+              );
+              await transactionManager.save(University, university);
+              return true;
+            },
+          );
+          if (inserted) created++;
+          continue;
+        }
+        if (row.googlePlaceId) {
+          const duplicate = await this.universityRepository.findOne({
+            where: { googlePlaceId: row.googlePlaceId },
+          });
+          if (duplicate) continue;
+        }
+        const university = this.universityRepository.create(entityData);
         await this.universityRepository.save(university);
         created++;
       } catch (err) {
@@ -1213,6 +1801,44 @@ SALIDA (JSON estricto, sin texto extra):
   private readonly sleep = (ms: number) =>
     new Promise((resolve) => setTimeout(resolve, ms));
 
+  private readonly GOOGLE_API_TIMEOUT_MS = 8_000;
+
+  private async fetchGoogleJson(url: URL, label: string): Promise<any> {
+    const controller = new AbortController();
+    const timer = setTimeout(
+      () => controller.abort(),
+      this.GOOGLE_API_TIMEOUT_MS,
+    );
+    try {
+      const response = await fetch(url.toString(), {
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        throw new Error(`${label} respondió HTTP ${response.status}`);
+      }
+      const data: any = await response.json();
+      if (
+        typeof data?.status === 'string' &&
+        data.status !== 'OK' &&
+        data.status !== 'ZERO_RESULTS'
+      ) {
+        throw new Error(
+          `${label} respondió ${data.status}: ${data.error_message || 'sin detalle'}`,
+        );
+      }
+      return data;
+    } catch (error) {
+      if (controller.signal.aborted) {
+        throw new Error(
+          `Timeout de ${this.GOOGLE_API_TIMEOUT_MS}ms esperando ${label}`,
+        );
+      }
+      throw error;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   /**
    * `maxPages`: cuántas páginas (20 resultados c/u) seguir vía
    * next_page_token. 1 = rápido (usado en corridas de todo el país); hasta
@@ -1279,13 +1905,7 @@ SALIDA (JSON estricto, sin texto extra):
     url.searchParams.set('radius', String(Math.min(radiusMeters, 50000)));
     url.searchParams.set('keyword', keyword);
     url.searchParams.set('language', 'es');
-    const res = await fetch(url.toString());
-    const data: any = await res.json();
-    if (data.status !== 'OK' && data.status !== 'ZERO_RESULTS') {
-      this.logger.warn(
-        `Places Nearby "${data.status}" para "${keyword}": ${data.error_message || ''}`,
-      );
-    }
+    const data: any = await this.fetchGoogleJson(url, 'Places Nearby');
     return data.results || [];
   }
 
@@ -1300,8 +1920,7 @@ SALIDA (JSON estricto, sin texto extra):
     url.searchParams.set('key', apiKey);
     url.searchParams.set('place_id', placeId);
     url.searchParams.set('fields', 'website');
-    const res = await fetch(url.toString());
-    const data: any = await res.json();
+    const data: any = await this.fetchGoogleJson(url, 'Place Details');
     return data?.result?.website || undefined;
   }
 
@@ -1331,8 +1950,7 @@ SALIDA (JSON estricto, sin texto extra):
       'locationbias',
       `circle:2000@${loc.latitude},${loc.longitude}`,
     );
-    const res = await fetch(url.toString());
-    const data: any = await res.json();
+    const data: any = await this.fetchGoogleJson(url, 'Find Place');
     return data?.candidates?.[0]?.place_id || undefined;
   }
 
