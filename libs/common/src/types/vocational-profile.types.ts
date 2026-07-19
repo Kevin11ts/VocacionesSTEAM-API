@@ -216,6 +216,8 @@ export interface VocationalProfile {
 // ---------------------------------------------------------------------------
 
 export interface ProfileComputationRequest {
+  /** Identificador estable del envío para reintentos offline idempotentes. */
+  clientSubmissionId?: string;
   /** Respuestas del test teórico: { [questionId]: "A" | "B" | ... }. */
   theoreticalAnswers: Record<string, string>;
   /** Resultados de los módulos de calibración completados. */

@@ -500,10 +500,14 @@ export class TestsService {
   }
 
   async getCalibration(userId: string) {
-    return this.calibrationRepository.find({
+    const rows = await this.calibrationRepository.find({
       where: { user: { id: userId } },
       select: ['moduleId', 'answers', 'updatedAt'],
+      order: { updatedAt: 'ASC' },
     });
+    const latestByModule = new Map<string, CalibrationResult>();
+    for (const row of rows) latestByModule.set(row.moduleId, row);
+    return [...latestByModule.values()];
   }
 
   /**

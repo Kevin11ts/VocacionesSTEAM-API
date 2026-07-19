@@ -6,6 +6,7 @@ import {
   IsObject,
   IsOptional,
   IsString,
+  IsUUID,
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
@@ -66,6 +67,11 @@ export class SimulatorAffinityResultDto {
 
 /** Request de POST /calibration/submit (contrato del mandato §12). */
 export class SubmitCalibrationDto {
+  @ApiProperty({ required: false, format: 'uuid' })
+  @IsOptional()
+  @IsUUID()
+  clientSubmissionId?: string;
+
   @ApiProperty({ example: 'gaming_habits' })
   @IsString()
   moduleId: string;
@@ -99,6 +105,11 @@ export class SimulatorDecisionDto {
 
 /** Request de POST /simulator/submit (contrato del mandato §12). */
 export class SubmitSimulatorDto {
+  @ApiProperty({ required: false, format: 'uuid' })
+  @IsOptional()
+  @IsUUID()
+  clientSubmissionId?: string;
+
   @ApiProperty({ example: 'software' })
   @IsString()
   careerSlug: string;
@@ -123,6 +134,11 @@ export class SubmitSimulatorDto {
 
 /** Request de POST /profile/compute (contrato del mandato §12). */
 export class ComputeProfileDto {
+  @ApiProperty({ required: false, format: 'uuid' })
+  @IsOptional()
+  @IsUUID()
+  clientSubmissionId?: string;
+
   @ApiProperty({
     example: { '1': 'A', '2': 'C' },
     description: 'Respuestas del test teórico: { [questionId]: letra }',

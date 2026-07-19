@@ -6,6 +6,7 @@ import {
   ManyToOne,
   OneToOne,
   JoinColumn,
+  Index,
 } from 'typeorm';
 import { User } from './user.entity';
 import { AiRecommendation } from './ai-recommendation.entity';
@@ -15,6 +16,11 @@ import { VocationalProfile } from '../types/vocational-profile.types';
 export class VocationalTest {
   @PrimaryGeneratedColumn('uuid')
   id: string;
+
+  /** Evita duplicar historiales cuando la PWA reintenta un envío offline. */
+  @Index('UQ_vocational_tests_client_submission', { unique: true })
+  @Column({ type: 'uuid', nullable: true })
+  clientSubmissionId: string | null;
 
   @ManyToOne(() => User, (user) => user.tests, { onDelete: 'CASCADE' })
   user: User;

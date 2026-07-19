@@ -71,12 +71,14 @@ export class TestsController {
       userId: string;
       moduleId: string;
       answers: Array<{ axis: SteamAxis; liked: boolean }>;
+      clientSubmissionId?: string;
     },
   ) {
     return this.motorVocacionalService.submitCalibrationAndRecompute(
       payload.userId,
       payload.moduleId,
       payload.answers,
+      payload.clientSubmissionId,
     );
   }
 
@@ -96,6 +98,7 @@ export class TestsController {
         too_fast: boolean;
         linear_pattern_detected: boolean;
       };
+      clientSubmissionId?: string;
     },
   ) {
     return this.motorVocacionalService.submitSimulatorAndRecompute(
@@ -103,6 +106,7 @@ export class TestsController {
       payload.careerSlug,
       payload.decisions,
       payload.biasFlags,
+      payload.clientSubmissionId,
     );
   }
 

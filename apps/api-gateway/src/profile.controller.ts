@@ -81,7 +81,12 @@ export class CalibrationGatewayController {
     return lastValueFrom(
       this.testsClient.send(
         { cmd: 'tests.submit-calibration-recompute' },
-        { userId: user.id, moduleId: body.moduleId, answers: body.answers },
+        {
+          userId: user.id,
+          moduleId: body.moduleId,
+          answers: body.answers,
+          clientSubmissionId: body.clientSubmissionId,
+        },
       ),
     );
   }
@@ -104,7 +109,8 @@ export class SimulatorGatewayController {
   })
   @ApiResponse({
     status: 200,
-    description: '[{ careerSlug, axis, affinity, biasFlags, feedback, completedAt }]',
+    description:
+      '[{ careerSlug, axis, affinity, biasFlags, feedback, completedAt }]',
   })
   async getSimulatorResults(@CurrentUser() user: any) {
     return lastValueFrom(
@@ -137,6 +143,7 @@ export class SimulatorGatewayController {
           careerSlug: body.careerSlug,
           decisions: body.decisions,
           biasFlags: body.biasFlags,
+          clientSubmissionId: body.clientSubmissionId,
         },
       ),
     );

@@ -41,6 +41,11 @@ describe('MotorVocacionalService', () => {
     runRepository = {
       create: jest.fn((value) => value),
       save: jest.fn(async (value) => ({ id: 'run-1', ...value })),
+      manager: {
+        transaction: jest.fn(async (callback) =>
+          callback({ getRepository: () => runRepository }),
+        ),
+      },
     };
     profileService = {
       loadStoredCalibrations: jest.fn().mockResolvedValue([]),
@@ -49,10 +54,14 @@ describe('MotorVocacionalService', () => {
         id: 'test-1',
         dominantTraits: 'Ciencia + Tecnologia',
       }),
+      findByClientSubmissionId: jest.fn().mockResolvedValue(null),
+      getLatestComputedProfile: jest.fn().mockResolvedValue(PROFILE),
       getLatestComputationRequest: jest.fn(),
       updateLatestComputedProfile: jest.fn(),
       saveCalibration: jest.fn(),
+      markCalibrationProfileApplied: jest.fn(),
       saveSimulatorResult: jest.fn(),
+      markSimulatorProfileApplied: jest.fn(),
     };
     const questionRepository = {
       find: jest.fn().mockResolvedValue([
@@ -134,7 +143,26 @@ describe('MotorVocacionalService', () => {
       'user-1',
       { theoreticalAnswers: { q1: 'A' } },
       PROFILE,
+      expect.anything(),
     );
+  });
+
+  it('returns an already confirmed offline submission without duplicating it', async () => {
+    profileService.findByClientSubmissionId.mockResolvedValue({
+      id: 'test-existing',
+      profile: PROFILE,
+    });
+    global.fetch = jest.fn();
+
+    await expect(
+      service.computeProfileForApplication('user-1', {
+        clientSubmissionId: '3d6f0a44-90a6-48fd-9920-57af57ee0be6',
+        theoreticalAnswers: { q1: 'A' },
+      }),
+    ).resolves.toBe(PROFILE);
+    expect(global.fetch).not.toHaveBeenCalled();
+    expect(runRepository.save).not.toHaveBeenCalled();
+    expect(profileService.persistComputedProfile).not.toHaveBeenCalled();
   });
 
   it('recomputes the latest history through FastAPI after new evidence', async () => {
@@ -175,5 +203,99 @@ describe('MotorVocacionalService', () => {
     ).rejects.toBeInstanceOf(RpcException);
     expect(runRepository.save).not.toHaveBeenCalled();
     expect(profileService.persistComputedProfile).not.toHaveBeenCalled();
+  });
+
+  it('does not recompute a calibration retry already applied by the API', async () => {
+    profileService.saveCalibration.mockResolvedValue({
+      alreadyProcessed: true,
+      profileApplied: true,
+    });
+    const recompute = jest.spyOn(service, 'recomputeLatestProfile');
+
+    await expect(
+      service.submitCalibrationAndRecompute(
+        'user-1',
+        'gaming_habits',
+        [{ axis: 'ciencia', liked: true }],
+        '3d6f0a44-90a6-48fd-9920-57af57ee0be6',
+      ),
+    ).resolves.toEqual({
+      success: true,
+      moduleId: 'gaming_habits',
+      profile: PROFILE,
+    });
+    expect(recompute).not.toHaveBeenCalled();
+  });
+
+  it('finishes the profile update when calibration evidence was saved before a failure', async () => {
+    const submissionId = '3d6f0a44-90a6-48fd-9920-57af57ee0be6';
+    profileService.saveCalibration.mockResolvedValue({
+      alreadyProcessed: true,
+      profileApplied: false,
+    });
+    jest.spyOn(service, 'recomputeLatestProfile').mockResolvedValue(PROFILE);
+
+    await service.submitCalibrationAndRecompute(
+      'user-1',
+      'gaming_habits',
+      [{ axis: 'ciencia', liked: true }],
+      submissionId,
+    );
+
+    expect(profileService.markCalibrationProfileApplied).toHaveBeenCalledWith(
+      'user-1',
+      submissionId,
+    );
+  });
+
+  it('does not recompute a simulator retry already applied by the API', async () => {
+    const affinity = {
+      careerSlug: 'software',
+      axis: 'tecnologia',
+      affinity: 82,
+    };
+    const feedback = { affinity_score: 82 };
+    profileService.saveSimulatorResult.mockResolvedValue({
+      affinity,
+      feedback,
+      alreadyProcessed: true,
+      profileApplied: true,
+    });
+    const recompute = jest.spyOn(service, 'recomputeLatestProfile');
+
+    await expect(
+      service.submitSimulatorAndRecompute(
+        'user-1',
+        'software',
+        [],
+        undefined,
+        '10b2ec06-35f8-4a17-99da-e56b467cfb65',
+      ),
+    ).resolves.toEqual({ success: true, affinity, feedback, profile: PROFILE });
+    expect(recompute).not.toHaveBeenCalled();
+  });
+
+  it('finishes the profile update when simulator evidence was saved before a failure', async () => {
+    const submissionId = '10b2ec06-35f8-4a17-99da-e56b467cfb65';
+    profileService.saveSimulatorResult.mockResolvedValue({
+      affinity: { careerSlug: 'software', axis: 'tecnologia', affinity: 82 },
+      feedback: { affinity_score: 82 },
+      alreadyProcessed: true,
+      profileApplied: false,
+    });
+    jest.spyOn(service, 'recomputeLatestProfile').mockResolvedValue(PROFILE);
+
+    await service.submitSimulatorAndRecompute(
+      'user-1',
+      'software',
+      [],
+      undefined,
+      submissionId,
+    );
+
+    expect(profileService.markSimulatorProfileApplied).toHaveBeenCalledWith(
+      'user-1',
+      submissionId,
+    );
   });
 });

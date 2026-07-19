@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { EntityManager, Repository } from 'typeorm';
 import { RpcException } from '@nestjs/microservices';
 import {
   CalibrationModuleResult,
@@ -114,14 +114,22 @@ export class ProfileService {
     userId: string,
     request: ProfileComputationRequest,
     profile: VocationalProfile,
+    manager?: EntityManager,
   ): Promise<VocationalTest> {
-    const user = await this.userRepository.findOne({ where: { id: userId } });
+    const userRepository = manager
+      ? manager.getRepository(User)
+      : this.userRepository;
+    const testsRepository = manager
+      ? manager.getRepository(VocationalTest)
+      : this.testsRepository;
+    const user = await userRepository.findOne({ where: { id: userId } });
     if (!user) throw new RpcException('User not found');
 
-    const testCount = await this.testsRepository.count({
+    const testCount = await testsRepository.count({
       where: { user: { id: userId } },
     });
-    const test = this.testsRepository.create({
+    const test = testsRepository.create({
+      clientSubmissionId: request.clientSubmissionId ?? null,
       user,
       testName: `Test Vocacional ${testCount + 1}`,
       answers: request.theoreticalAnswers,
@@ -129,7 +137,33 @@ export class ProfileService {
       dominantTraits: this.legacyDominantTraits(profile.dominantAxes),
       profile,
     });
-    return this.testsRepository.save(test);
+    return testsRepository.save(test);
+  }
+
+  /** Busca el resultado de un envío offline previamente confirmado. */
+  async findByClientSubmissionId(
+    userId: string,
+    clientSubmissionId?: string,
+    manager?: EntityManager,
+  ): Promise<VocationalTest | null> {
+    if (!clientSubmissionId) return null;
+    const repository = manager
+      ? manager.getRepository(VocationalTest)
+      : this.testsRepository;
+    return repository.findOne({
+      where: { clientSubmissionId, user: { id: userId } },
+    });
+  }
+
+  /** Perfil persistido más reciente, usado al responder un reintento. */
+  async getLatestComputedProfile(
+    userId: string,
+  ): Promise<VocationalProfile | null> {
+    const test = await this.testsRepository.findOne({
+      where: { user: { id: userId } },
+      order: { completedAt: 'DESC' },
+    });
+    return test?.profile ?? null;
   }
 
   /** Entrada teórica del test más reciente, necesaria para recalcularlo. */
@@ -180,12 +214,50 @@ export class ProfileService {
     userId: string,
     moduleId: string,
     answers: Array<{ axis: SteamAxis; liked: boolean }>,
-  ): Promise<void> {
+    clientSubmissionId?: string,
+  ): Promise<{ alreadyProcessed: boolean; profileApplied: boolean }> {
     const user = await this.userRepository.findOne({ where: { id: userId } });
     if (!user) throw new RpcException('User not found');
 
+    if (clientSubmissionId) {
+      const confirmed = await this.calibrationRepository.findOne({
+        where: { user: { id: userId }, clientSubmissionId },
+      });
+      if (confirmed) {
+        return {
+          alreadyProcessed: true,
+          profileApplied: !!confirmed.profileAppliedAt,
+        };
+      }
+
+      const calibration = this.calibrationRepository.create({
+        user,
+        moduleId,
+        answers,
+        clientSubmissionId,
+        profileAppliedAt: null,
+      });
+      try {
+        await this.calibrationRepository.save(calibration);
+        return { alreadyProcessed: false, profileApplied: false };
+      } catch (error) {
+        // Dos reintentos concurrentes pueden competir por el índice único.
+        const raced = await this.calibrationRepository.findOne({
+          where: { user: { id: userId }, clientSubmissionId },
+        });
+        if (raced) {
+          return {
+            alreadyProcessed: true,
+            profileApplied: !!raced.profileAppliedAt,
+          };
+        }
+        throw error;
+      }
+    }
+
     let calibration = await this.calibrationRepository.findOne({
       where: { user: { id: userId }, moduleId },
+      order: { createdAt: 'DESC' },
     });
     if (calibration) {
       calibration.answers = answers;
@@ -194,8 +266,24 @@ export class ProfileService {
         user,
         moduleId,
         answers,
+        clientSubmissionId: null,
+        profileAppliedAt: null,
       });
     }
+    await this.calibrationRepository.save(calibration);
+    return { alreadyProcessed: false, profileApplied: false };
+  }
+
+  async markCalibrationProfileApplied(
+    userId: string,
+    clientSubmissionId?: string,
+  ): Promise<void> {
+    if (!clientSubmissionId) return;
+    const calibration = await this.calibrationRepository.findOne({
+      where: { user: { id: userId }, clientSubmissionId },
+    });
+    if (!calibration || calibration.profileAppliedAt) return;
+    calibration.profileAppliedAt = new Date();
     await this.calibrationRepository.save(calibration);
   }
 
@@ -229,17 +317,47 @@ export class ProfileService {
     careerSlug: string,
     decisions: SimulatorDecisionInput[],
     biasFlags?: SimulatorBiasFlags,
+    clientSubmissionId?: string,
   ): Promise<{
     affinity: SimulatorAffinityResult;
     feedback: SimulatorFeedbackResponse;
+    alreadyProcessed: boolean;
+    profileApplied: boolean;
   }> {
     const user = await this.userRepository.findOne({ where: { id: userId } });
     if (!user) throw new RpcException('User not found');
+
+    if (clientSubmissionId) {
+      const confirmed = await this.userHistoryRepository.findOne({
+        where: {
+          userId,
+          activityType: SIMULATOR_ACTIVITY,
+          clientSubmissionId,
+        },
+      });
+      if (confirmed?.results?.affinity && confirmed.results.feedback) {
+        return {
+          affinity: confirmed.results.affinity,
+          feedback: confirmed.results.feedback,
+          alreadyProcessed: true,
+          profileApplied: !!confirmed.profileAppliedAt,
+        };
+      }
+    }
 
     const simulator = await this.careerSimulatorRepository.findOne({
       where: { slug: careerSlug },
     });
     if (!simulator) throw new RpcException('Simulator not found');
+
+    const existingHistory = await this.userHistoryRepository.findOne({
+      where: {
+        userId,
+        activityType: SIMULATOR_ACTIVITY,
+        activityId: careerSlug,
+      },
+      order: { createdAt: 'DESC' },
+    });
 
     const steps = Array.isArray(simulator.steps) ? simulator.steps : [];
     const flags = biasFlags ?? deriveBiasFlags(decisions, steps);
@@ -252,14 +370,9 @@ export class ProfileService {
       biasFlags: flags,
     });
 
-    // Un intento por carrera: el nuevo resultado reemplaza al anterior.
-    let history = await this.userHistoryRepository.findOne({
-      where: {
-        userId,
-        activityType: SIMULATOR_ACTIVITY,
-        activityId: careerSlug,
-      },
-    });
+    // Los envíos con ID conservan historial para que cualquier reintento viejo
+    // sea reconocible. El contrato legacy sin ID conserva el upsert anterior.
+    let history = clientSubmissionId ? null : existingHistory;
     const results = {
       affinity: result,
       feedback,
@@ -269,6 +382,8 @@ export class ProfileService {
       history.results = results;
     } else {
       history = this.userHistoryRepository.create({
+        clientSubmissionId: clientSubmissionId ?? null,
+        profileAppliedAt: null,
         user,
         userId,
         activityType: SIMULATOR_ACTIVITY,
@@ -276,8 +391,51 @@ export class ProfileService {
         results,
       });
     }
+    try {
+      await this.userHistoryRepository.save(history);
+      return {
+        affinity: result,
+        feedback,
+        alreadyProcessed: false,
+        profileApplied: false,
+      };
+    } catch (error) {
+      const raced = clientSubmissionId
+        ? await this.userHistoryRepository.findOne({
+            where: {
+              userId,
+              activityType: SIMULATOR_ACTIVITY,
+              clientSubmissionId,
+            },
+          })
+        : null;
+      if (raced?.results?.affinity && raced.results.feedback) {
+        return {
+          affinity: raced.results.affinity,
+          feedback: raced.results.feedback,
+          alreadyProcessed: true,
+          profileApplied: !!raced.profileAppliedAt,
+        };
+      }
+      throw error;
+    }
+  }
+
+  async markSimulatorProfileApplied(
+    userId: string,
+    clientSubmissionId?: string,
+  ): Promise<void> {
+    if (!clientSubmissionId) return;
+    const history = await this.userHistoryRepository.findOne({
+      where: {
+        userId,
+        activityType: SIMULATOR_ACTIVITY,
+        clientSubmissionId,
+      },
+    });
+    if (!history || history.profileAppliedAt) return;
+    history.profileAppliedAt = new Date();
     await this.userHistoryRepository.save(history);
-    return { affinity: result, feedback };
   }
 
   /**
@@ -351,17 +509,21 @@ export class ProfileService {
       where: { user: { id: userId } },
       order: { createdAt: 'ASC' },
     });
-    return rows.map((row) => ({
-      moduleId: row.moduleId,
-      answers: Array.isArray(row.answers)
-        ? row.answers.filter(
-            (a: any) =>
-              a &&
-              typeof a.liked === 'boolean' &&
-              normalizeAxisKey(a.axis) !== null,
-          )
-        : [],
-    }));
+    const latestByModule = new Map<string, CalibrationModuleResult>();
+    for (const row of rows) {
+      latestByModule.set(row.moduleId, {
+        moduleId: row.moduleId,
+        answers: Array.isArray(row.answers)
+          ? row.answers.filter(
+              (a: any) =>
+                a &&
+                typeof a.liked === 'boolean' &&
+                normalizeAxisKey(a.axis) !== null,
+            )
+          : [],
+      });
+    }
+    return [...latestByModule.values()];
   }
 
   async loadStoredSimulatorResults(

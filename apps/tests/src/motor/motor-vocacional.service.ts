@@ -153,6 +153,19 @@ export class MotorVocacionalService {
     userId: string,
     request: ProfileComputationRequest,
   ): Promise<PersistedMotorProfile> {
+    const motorResponse = await this.requestProfileRemote(userId, request);
+    const run = await this.runRepository.save(
+      this.runRepository.create(this.runValues(userId, motorResponse)),
+    );
+
+    return { runId: run.id, ...motorResponse };
+  }
+
+  /** Ejecuta FastAPI sin persistir; el caller decide la transacción local. */
+  private async requestProfileRemote(
+    userId: string,
+    request: ProfileComputationRequest,
+  ): Promise<RemoteProfileResponse> {
     const raw = await this.countTheoretical(request.theoreticalAnswers);
     const calibrationResults =
       request.calibrationResults ??
@@ -165,31 +178,26 @@ export class MotorVocacionalService {
       this.catalogService.getCareerCatalog(),
     ]);
 
-    const motorResponse = await this.post<RemoteProfileResponse>(
-      '/v1/profile/compute',
-      {
-        theoreticalCounts: raw,
-        calibrationResults,
-        simulatorResults,
-        vocationCatalog,
-        careerCatalog,
-      },
-    );
+    return this.post<RemoteProfileResponse>('/v1/profile/compute', {
+      theoreticalCounts: raw,
+      calibrationResults,
+      simulatorResults,
+      vocationCatalog,
+      careerCatalog,
+    });
+  }
 
-    const run = await this.runRepository.save(
-      this.runRepository.create({
-        algorithm: motorResponse.algorithm ?? 'A0',
-        engineVersion: motorResponse.version,
-        profileVersion: motorResponse.profile?.profileVersion,
-        userId,
-        executionTimeMs: motorResponse.executionTimeMs,
-        breakdown: motorResponse.algorithmBreakdown,
-        result: motorResponse.profile,
-        aiUsed: false,
-      }),
-    );
-
-    return { runId: run.id, ...motorResponse };
+  private runValues(userId: string, response: RemoteProfileResponse) {
+    return {
+      algorithm: response.algorithm ?? 'A0',
+      engineVersion: response.version,
+      profileVersion: response.profile?.profileVersion,
+      userId,
+      executionTimeMs: response.executionTimeMs,
+      breakdown: response.algorithmBreakdown,
+      result: response.profile,
+      aiUsed: false,
+    };
   }
 
   /**
@@ -202,15 +210,61 @@ export class MotorVocacionalService {
   ): Promise<{
     test: VocationalTest;
     profile: VocationalProfile;
-    run: PersistedMotorProfile;
+    run: PersistedMotorProfile | null;
   }> {
-    const run = await this.computeProfileRemote(userId, request);
-    const test = await this.profileService.persistComputedProfile(
+    const existing = await this.profileService.findByClientSubmissionId(
       userId,
-      request,
-      run.profile,
+      request.clientSubmissionId,
     );
-    return { test, profile: run.profile, run };
+    if (existing?.profile) {
+      return { test: existing, profile: existing.profile, run: null };
+    }
+
+    const motorResponse = await this.requestProfileRemote(userId, request);
+    try {
+      return await this.runRepository.manager.transaction(async (manager) => {
+        const existingInTransaction =
+          await this.profileService.findByClientSubmissionId(
+            userId,
+            request.clientSubmissionId,
+            manager,
+          );
+        if (existingInTransaction?.profile) {
+          return {
+            test: existingInTransaction,
+            profile: existingInTransaction.profile,
+            run: null,
+          };
+        }
+
+        const test = await this.profileService.persistComputedProfile(
+          userId,
+          request,
+          motorResponse.profile,
+          manager,
+        );
+        const repository = manager.getRepository(AlgorithmRun);
+        const savedRun = await repository.save(
+          repository.create(this.runValues(userId, motorResponse)),
+        );
+        return {
+          test,
+          profile: motorResponse.profile,
+          run: { runId: savedRun.id, ...motorResponse },
+        };
+      });
+    } catch (error) {
+      // Una carrera entre dos reintentos puede alcanzar el índice único. La
+      // transacción revierte la corrida duplicada y devolvemos la confirmada.
+      const confirmed = await this.profileService.findByClientSubmissionId(
+        userId,
+        request.clientSubmissionId,
+      );
+      if (confirmed?.profile) {
+        return { test: confirmed, profile: confirmed.profile, run: null };
+      }
+      throw error;
+    }
   }
 
   /** Contrato directo que ya consume POST /profile/compute en Angular. */
@@ -241,9 +295,25 @@ export class MotorVocacionalService {
     userId: string,
     moduleId: string,
     answers: Array<{ axis: SteamAxis; liked: boolean }>,
+    clientSubmissionId?: string,
   ) {
-    await this.profileService.saveCalibration(userId, moduleId, answers);
+    const { alreadyProcessed, profileApplied } =
+      await this.profileService.saveCalibration(
+        userId,
+        moduleId,
+        answers,
+        clientSubmissionId,
+      );
+    if (alreadyProcessed && profileApplied) {
+      const profile =
+        await this.profileService.getLatestComputedProfile(userId);
+      return { success: true, moduleId, profile };
+    }
     const profile = await this.recomputeLatestProfile(userId);
+    await this.profileService.markCalibrationProfileApplied(
+      userId,
+      clientSubmissionId,
+    );
     return { success: true, moduleId, profile };
   }
 
@@ -252,15 +322,26 @@ export class MotorVocacionalService {
     careerSlug: string,
     decisions: SimulatorDecisionInput[],
     biasFlags?: SimulatorBiasFlags,
+    clientSubmissionId?: string,
   ) {
-    const { affinity, feedback } =
+    const { affinity, feedback, alreadyProcessed, profileApplied } =
       await this.profileService.saveSimulatorResult(
         userId,
         careerSlug,
         decisions,
         biasFlags,
+        clientSubmissionId,
       );
+    if (alreadyProcessed && profileApplied) {
+      const profile =
+        await this.profileService.getLatestComputedProfile(userId);
+      return { success: true, affinity, feedback, profile };
+    }
     const profile = await this.recomputeLatestProfile(userId);
+    await this.profileService.markSimulatorProfileApplied(
+      userId,
+      clientSubmissionId,
+    );
     return { success: true, affinity, feedback, profile };
   }
 
