@@ -42,6 +42,14 @@ import {
   AdminCalibrationDecksController,
 } from './calibration-decks.controller';
 import { MotorGatewayController } from './motor.controller';
+import {
+  AdminSupportGatewayController,
+  SupportGatewayController,
+} from './support.controller';
+import {
+  AdminNotificationsGatewayController,
+  NotificationsGatewayController,
+} from './notifications.controller';
 
 @Module({
   imports: [
@@ -98,6 +106,17 @@ import { MotorGatewayController } from './motor.controller';
           },
         }),
       },
+      {
+        name: 'MAIL_SERVICE',
+        inject: [ConfigService],
+        useFactory: (config: ConfigService) => ({
+          transport: Transport.TCP,
+          options: {
+            host: config.get<string>('HOST_MAIL', '127.0.0.1'),
+            port: config.get<number>('PORT_MAIL', 3005),
+          },
+        }),
+      },
     ]),
   ],
   controllers: [
@@ -122,6 +141,10 @@ import { MotorGatewayController } from './motor.controller';
     CalibrationDecksController,
     AdminCalibrationDecksController,
     MotorGatewayController,
+    SupportGatewayController,
+    AdminSupportGatewayController,
+    NotificationsGatewayController,
+    AdminNotificationsGatewayController,
   ],
   providers: [JwtStrategy, JwtRefreshStrategy, GoogleStrategy, RolesGuard],
 })

@@ -160,4 +160,109 @@ export class MailService {
       throw new Error('No se pudo entregar el correo con el código');
     }
   }
+
+  private escapeHtml(value: string): string {
+    return String(value)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
+  }
+
+  private resolveNotificationUrl(url?: string): string {
+    if (!url) return '';
+    if (/^https:\/\//i.test(url)) return url;
+    if (/^\/(?!\/)/.test(url)) {
+      const frontendUrl = this.configService
+        .get<string>('FRONTEND_URL', 'https://vocaciones-steam.vercel.app')
+        .replace(/\/$/, '');
+      return `${frontendUrl}${url}`;
+    }
+    return '';
+  }
+
+  async sendNotificationEmail(
+    email: string,
+    title: string,
+    message: string,
+    url?: string,
+  ) {
+    if (!this.apiInstance) {
+      throw new Error('El servicio de correo no está configurado');
+    }
+    const safeTitle = this.escapeHtml(title);
+    const safeMessage = this.escapeHtml(message).replace(/\n/g, '<br>');
+    const resolvedUrl = this.resolveNotificationUrl(url);
+    const safeUrl = resolvedUrl ? this.escapeHtml(resolvedUrl) : '';
+    const action = safeUrl
+      ? `<p style="margin:28px 0 0"><a href="${safeUrl}" style="display:inline-block;padding:12px 20px;border-radius:10px;background:#07B1C9;color:#fff;text-decoration:none;font-weight:700">Abrir Vocaciones STEAM</a></p>`
+      : '';
+    const data = await this.apiInstance.transactionalEmails.sendTransacEmail({
+      subject: title,
+      htmlContent: `
+        <div style="background:#f4f6f8;padding:32px;font-family:Arial,sans-serif">
+          <div style="max-width:600px;margin:auto;background:#fff;border-radius:16px;padding:32px;border-top:6px solid #07B1C9">
+            <h1 style="font-size:24px;color:#243447">${safeTitle}</h1>
+            <p style="font-size:16px;line-height:1.65;color:#4a5568">${safeMessage}</p>
+            ${action}
+            <p style="margin-top:32px;font-size:12px;color:#8b98a5">Este mensaje respeta tus preferencias de notificación en Vocaciones STEAM.</p>
+          </div>
+        </div>`,
+      sender: {
+        name: 'Vocaciones STEAM',
+        email: 'vocaciones.steam0@gmail.com',
+      },
+      to: [{ email }],
+    });
+    return { delivered: true, data };
+  }
+
+  async sendSupportCreated(data: {
+    ticket: {
+      reference: string;
+      subject: string;
+      category: string;
+      message: string;
+    };
+    requester: { email: string; fullname: string };
+  }) {
+    const supportEmail = this.configService.get<string>(
+      'SUPPORT_EMAIL',
+      'vocaciones.steam0@gmail.com',
+    );
+    const frontendUrl = this.configService.get<string>(
+      'FRONTEND_URL',
+      'https://vocaciones-steam.vercel.app',
+    );
+    await this.sendNotificationEmail(
+      data.requester.email,
+      `Recibimos tu ticket ${data.ticket.reference}`,
+      `Hola ${data.requester.fullname}. Tu solicitud “${data.ticket.subject}” ya quedó registrada. Podrás consultar su estado y la respuesta del equipo desde Contactar soporte.`,
+      `${frontendUrl}/profile/contact`,
+    );
+    await this.sendNotificationEmail(
+      supportEmail,
+      `Nuevo ticket ${data.ticket.reference}: ${data.ticket.subject}`,
+      `Categoría: ${data.ticket.category}\nUsuario: ${data.requester.fullname} (${data.requester.email})\n\n${data.ticket.message}`,
+      `${frontendUrl}/admin/communications`,
+    );
+    return { delivered: true };
+  }
+
+  async sendSupportReply(data: {
+    ticket: { reference: string; subject: string; adminReply: string };
+    requester: { email: string; fullname: string };
+  }) {
+    const frontendUrl = this.configService.get<string>(
+      'FRONTEND_URL',
+      'https://vocaciones-steam.vercel.app',
+    );
+    return this.sendNotificationEmail(
+      data.requester.email,
+      `Respuesta a tu ticket ${data.ticket.reference}`,
+      `Hola ${data.requester.fullname}. El equipo respondió tu solicitud “${data.ticket.subject}”:\n\n${data.ticket.adminReply}`,
+      `${frontendUrl}/profile/contact`,
+    );
+  }
 }

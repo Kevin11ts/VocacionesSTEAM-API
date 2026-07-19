@@ -44,4 +44,8 @@ export class UserSettings {
 
   @Column({ default: false })
   communityMessages: boolean = false;
+
+  /** Evita activar entregas reales para preferencias heredadas del modo simulado. */
+  @Column({ type: 'timestamptz', nullable: true })
+  notificationsConfiguredAt: Date | null = null;
 }

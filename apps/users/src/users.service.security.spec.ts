@@ -19,6 +19,7 @@ describe('UsersService privilege changes', () => {
       {} as any,
       {} as any,
       {} as any,
+      {} as any,
     );
 
     await service.update('admin-1', { role: 'student' }, 'admin-2');

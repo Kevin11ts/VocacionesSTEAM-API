@@ -18,6 +18,11 @@ export * from './entities/vocation-catalog.entity';
 export * from './entities/career-catalog.entity';
 export * from './entities/axis-meta.entity';
 export * from './entities/algorithm-run.entity';
+export * from './entities/support-ticket.entity';
+export * from './entities/push-subscription.entity';
+export * from './entities/notification-config.entity';
+export * from './entities/notification-delivery.entity';
+export * from './entities/notification-campaign.entity';
 export * from './database/database.module';
 export * from './config/config.module';
 
@@ -33,4 +38,5 @@ export * from './dto/profile.dto';
 export * from './dto/university-match.dto';
 export * from './dto/saved-university.dto';
 export * from './dto/saved-course.dto';
+export * from './dto/support-notification.dto';
 export * from './common.module';

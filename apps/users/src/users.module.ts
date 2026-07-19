@@ -10,6 +10,9 @@ import {
   OtpCode,
   SavedUniversity,
   SavedCourse,
+  SupportTicket,
+  AlgorithmRun,
+  UniversityMatchCache,
 } from '@app/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
@@ -24,6 +27,9 @@ import { TypeOrmModule } from '@nestjs/typeorm';
       OtpCode,
       SavedUniversity,
       SavedCourse,
+      SupportTicket,
+      AlgorithmRun,
+      UniversityMatchCache,
     ]),
   ],
   controllers: [UsersController],

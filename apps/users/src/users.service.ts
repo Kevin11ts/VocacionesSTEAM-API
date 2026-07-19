@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { randomBytes } from 'crypto';
 import {
   User,
   UserSettings,
@@ -8,6 +9,10 @@ import {
   AiRecommendation,
   SavedUniversity,
   SavedCourse,
+  SupportTicket,
+  AlgorithmRun,
+  UniversityMatchCache,
+  OtpCode,
 } from '@app/common';
 import { RpcException } from '@nestjs/microservices';
 import * as bcrypt from 'bcrypt';
@@ -22,7 +27,58 @@ export class UsersService {
     private readonly savedUniversityRepository: Repository<SavedUniversity>,
     @InjectRepository(SavedCourse)
     private readonly savedCourseRepository: Repository<SavedCourse>,
+    @InjectRepository(SupportTicket)
+    private readonly supportTicketRepository: Repository<SupportTicket>,
   ) {}
+
+  private supportTicketView(ticket: SupportTicket) {
+    return {
+      id: ticket.id,
+      reference: ticket.reference,
+      userId: ticket.userId,
+      category: ticket.category,
+      subject: ticket.subject,
+      message: ticket.message,
+      status: ticket.status,
+      attachmentName: ticket.attachmentName,
+      attachmentMimeType: ticket.attachmentMimeType,
+      attachmentSize: ticket.attachmentSize,
+      hasAttachment: !!ticket.attachmentName,
+      adminReply: ticket.adminReply,
+      repliedAt: ticket.repliedAt,
+      createdAt: ticket.createdAt,
+      updatedAt: ticket.updatedAt,
+      user: ticket.user
+        ? {
+            id: ticket.user.id,
+            email: ticket.user.email,
+            fullname: ticket.user.fullname,
+          }
+        : undefined,
+    };
+  }
+
+  private attachmentMatchesMimeType(data: Buffer, mimeType: string): boolean {
+    if (mimeType === 'image/png') {
+      return data
+        .subarray(0, 8)
+        .equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+    }
+    if (mimeType === 'image/jpeg') {
+      return data.length >= 3 && data[0] === 0xff && data[1] === 0xd8;
+    }
+    if (mimeType === 'image/webp') {
+      return (
+        data.length >= 12 &&
+        data.subarray(0, 4).toString('ascii') === 'RIFF' &&
+        data.subarray(8, 12).toString('ascii') === 'WEBP'
+      );
+    }
+    if (mimeType === 'application/pdf') {
+      return data.subarray(0, 5).toString('ascii') === '%PDF-';
+    }
+    return false;
+  }
 
   async getProfile(userId: string) {
     const user = await this.userRepository.findOne({
@@ -312,11 +368,204 @@ export class UsersService {
       }
     }
 
-    const updatedSettings = Object.assign(user.settings, clean);
+    const updatedSettings = Object.assign(
+      user.settings ?? this.settingsRepository.create({ user }),
+      clean,
+    );
+    const notificationKeys: (keyof UserSettings)[] = [
+      'pushEnabled',
+      'emailEnabled',
+      'emailMarketing',
+      'weeklySummary',
+      'newCareersAlerts',
+      'testReminders',
+      'communityMessages',
+    ];
+    if (notificationKeys.some((key) => settingsDto[key] !== undefined)) {
+      updatedSettings.notificationsConfiguredAt = new Date();
+    }
     user.settings = await this.settingsRepository.save(updatedSettings);
 
     const { password, ...safeUser } = user;
     return { message: 'Settings updated', user: safeUser };
+  }
+
+  // --- SOPORTE ---
+
+  async createSupportTicket(
+    userId: string,
+    data: { category: string; subject: string; message: string },
+    attachment?: {
+      name: string;
+      mimeType: string;
+      size: number;
+      dataBase64: string;
+    },
+  ) {
+    const user = await this.userRepository.findOne({ where: { id: userId } });
+    if (!user) throw new RpcException('User not found');
+
+    const allowedMimeTypes = new Set([
+      'image/jpeg',
+      'image/png',
+      'image/webp',
+      'application/pdf',
+    ]);
+    if (
+      attachment &&
+      (!allowedMimeTypes.has(attachment.mimeType) ||
+        attachment.size <= 0 ||
+        attachment.size > 5 * 1024 * 1024)
+    ) {
+      throw new RpcException(
+        'El archivo debe ser una imagen o PDF de máximo 5 MB.',
+      );
+    }
+
+    let reference = '';
+    for (let attempt = 0; attempt < 5; attempt++) {
+      reference = `SUP-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${randomBytes(3).toString('hex').toUpperCase()}`;
+      const exists = await this.supportTicketRepository.exist({
+        where: { reference },
+      });
+      if (!exists) break;
+    }
+
+    const attachmentData = attachment
+      ? Buffer.from(attachment.dataBase64, 'base64')
+      : null;
+    if (
+      attachmentData &&
+      (attachmentData.length !== attachment?.size ||
+        attachmentData.length > 5 * 1024 * 1024 ||
+        !this.attachmentMatchesMimeType(
+          attachmentData,
+          attachment?.mimeType ?? '',
+        ))
+    ) {
+      throw new RpcException(
+        'El contenido del archivo no coincide con una imagen o PDF válido.',
+      );
+    }
+
+    const ticket = this.supportTicketRepository.create({
+      reference,
+      user,
+      userId,
+      category: data.category,
+      subject: data.subject.trim(),
+      message: data.message.trim(),
+      status: 'open',
+      attachmentName: attachment?.name.slice(0, 255) ?? null,
+      attachmentMimeType: attachment?.mimeType ?? null,
+      attachmentSize: attachment?.size ?? null,
+      attachmentData,
+      adminReply: null,
+      repliedAt: null,
+    });
+    const saved = await this.supportTicketRepository.save(ticket);
+    return {
+      ticket: this.supportTicketView(saved),
+      requester: { email: user.email, fullname: user.fullname },
+    };
+  }
+
+  async getOwnSupportTickets(userId: string) {
+    const tickets = await this.supportTicketRepository.find({
+      where: { userId },
+      order: { createdAt: 'DESC' },
+    });
+    return tickets.map((ticket) => this.supportTicketView(ticket));
+  }
+
+  async getAllSupportTickets() {
+    const tickets = await this.supportTicketRepository.find({
+      relations: ['user'],
+      order: { updatedAt: 'DESC' },
+    });
+    return tickets.map((ticket) => this.supportTicketView(ticket));
+  }
+
+  async getSupportAttachment(
+    ticketId: string,
+    requesterId: string,
+    requesterRole: string,
+  ) {
+    const ticket = await this.supportTicketRepository
+      .createQueryBuilder('ticket')
+      .addSelect('ticket.attachmentData')
+      .where('ticket.id = :ticketId', { ticketId })
+      .getOne();
+    if (
+      !ticket ||
+      (requesterRole !== 'admin' && ticket.userId !== requesterId)
+    ) {
+      throw new RpcException('Ticket no encontrado');
+    }
+    if (!ticket.attachmentData || !ticket.attachmentName) {
+      throw new RpcException('Este ticket no tiene archivo adjunto');
+    }
+    return {
+      name: ticket.attachmentName,
+      mimeType: ticket.attachmentMimeType || 'application/octet-stream',
+      dataBase64: ticket.attachmentData.toString('base64'),
+    };
+  }
+
+  async updateSupportTicket(
+    ticketId: string,
+    data: { status?: string; reply?: string },
+  ) {
+    const ticket = await this.supportTicketRepository.findOne({
+      where: { id: ticketId },
+      relations: ['user'],
+    });
+    if (!ticket) throw new RpcException('Ticket no encontrado');
+
+    const reply = data.reply?.trim();
+    const replyChanged = !!reply && reply !== ticket.adminReply;
+    if (data.status) ticket.status = data.status;
+    if (reply) {
+      ticket.adminReply = reply;
+      ticket.repliedAt = new Date();
+      if (!data.status && ticket.status === 'open') ticket.status = 'in_review';
+    }
+    const saved = await this.supportTicketRepository.save(ticket);
+    return {
+      ticket: this.supportTicketView(saved),
+      replyChanged,
+      requester: { email: ticket.user.email, fullname: ticket.user.fullname },
+    };
+  }
+
+  // --- AUTOELIMINACIÓN DE CUENTA ---
+
+  async deleteOwnAccount(
+    userId: string,
+    confirmation: string,
+    password?: string,
+  ) {
+    if (confirmation !== 'ELIMINAR') {
+      throw new RpcException('Escribe ELIMINAR para confirmar la operación.');
+    }
+    const user = await this.userRepository.findOne({ where: { id: userId } });
+    if (!user) throw new RpcException('User not found');
+    if (user.role === 'admin') await this.assertNotLastAdmin();
+    if (user.password) {
+      if (!password || !(await bcrypt.compare(password, user.password))) {
+        throw new RpcException('La contraseña actual no es correcta.');
+      }
+    }
+
+    await this.userRepository.manager.transaction(async (manager) => {
+      // Estas tablas guardan userId sin FK; se limpian explícitamente para que
+      // la eliminación incluya cachés, trazas algorítmicas y OTP del correo.
+      await manager.delete(AlgorithmRun, { userId });
+      await manager.delete(UniversityMatchCache, { userId });
+      await manager.delete(OtpCode, { email: user.email });
+      await manager.delete(User, { id: userId });
+    });
+    return { success: true, message: 'Cuenta y datos personales eliminados.' };
   }
 
   // --- SAVED UNIVERSITIES ---

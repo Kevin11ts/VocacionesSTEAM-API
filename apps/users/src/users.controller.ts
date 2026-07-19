@@ -36,6 +36,83 @@ export class UsersController {
     return this.usersService.updateSettings(payload.userId, payload.settings);
   }
 
+  @MessagePattern({ cmd: 'support.create' })
+  async createSupportTicket(
+    @Payload()
+    payload: {
+      userId: string;
+      data: { category: string; subject: string; message: string };
+      attachment?: {
+        name: string;
+        mimeType: string;
+        size: number;
+        dataBase64: string;
+      };
+    },
+  ) {
+    return this.usersService.createSupportTicket(
+      payload.userId,
+      payload.data,
+      payload.attachment,
+    );
+  }
+
+  @MessagePattern({ cmd: 'support.list-own' })
+  async getOwnSupportTickets(@Payload() userId: string) {
+    return this.usersService.getOwnSupportTickets(userId);
+  }
+
+  @MessagePattern({ cmd: 'support.list-all' })
+  async getAllSupportTickets() {
+    return this.usersService.getAllSupportTickets();
+  }
+
+  @MessagePattern({ cmd: 'support.attachment' })
+  async getSupportAttachment(
+    @Payload()
+    payload: {
+      ticketId: string;
+      requesterId: string;
+      requesterRole: string;
+    },
+  ) {
+    return this.usersService.getSupportAttachment(
+      payload.ticketId,
+      payload.requesterId,
+      payload.requesterRole,
+    );
+  }
+
+  @MessagePattern({ cmd: 'support.update' })
+  async updateSupportTicket(
+    @Payload()
+    payload: {
+      ticketId: string;
+      data: { status?: string; reply?: string };
+    },
+  ) {
+    return this.usersService.updateSupportTicket(
+      payload.ticketId,
+      payload.data,
+    );
+  }
+
+  @MessagePattern({ cmd: 'users.delete-own-account' })
+  async deleteOwnAccount(
+    @Payload()
+    payload: {
+      userId: string;
+      confirmation: string;
+      password?: string;
+    },
+  ) {
+    return this.usersService.deleteOwnAccount(
+      payload.userId,
+      payload.confirmation,
+      payload.password,
+    );
+  }
+
   // --- SAVED UNIVERSITIES ---
 
   @MessagePattern({ cmd: 'users.save-university' })

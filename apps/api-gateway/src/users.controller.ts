@@ -28,6 +28,7 @@ import {
   ChangePasswordDto,
   UpdateUserSettingsDto,
   AcceptTermsDto,
+  DeleteOwnAccountDto,
 } from '@app/common';
 import { Roles } from './decorators/roles.decorator';
 import { CurrentUser } from './decorators/current-user.decorator';
@@ -136,6 +137,25 @@ export class UsersGatewayController {
       this.usersClient.send(
         { cmd: 'users.update-settings' },
         { userId: user.id, settings },
+      ),
+    );
+  }
+
+  @Post('delete-account')
+  @ApiOperation({ summary: 'Eliminar definitivamente la cuenta autenticada' })
+  @ApiBody({ type: DeleteOwnAccountDto })
+  async deleteOwnAccount(
+    @CurrentUser() user: any,
+    @Body() data: DeleteOwnAccountDto,
+  ) {
+    return lastValueFrom(
+      this.usersClient.send(
+        { cmd: 'users.delete-own-account' },
+        {
+          userId: user.id,
+          confirmation: data.confirmation,
+          password: data.password,
+        },
       ),
     );
   }
