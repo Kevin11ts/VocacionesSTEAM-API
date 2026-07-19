@@ -553,8 +553,8 @@ export class ProfileService {
   // =========================================================================
 
   /**
-   * Mapea las respuestas { questionId: letra } al conteo crudo por eje que
-   * consume A1, usando el steamTrait de la opción elegida en BD.
+   * Mapea las respuestas { questionId: optionId } al conteo crudo por eje que
+   * consume A1, conservando compatibilidad con las letras históricas.
    */
   private async countTheoretical(
     answers: Record<string, string>,

@@ -65,13 +65,17 @@ export function normalizeAxisKey(value: string): SteamAxis | null {
 /** Forma mínima de una pregunta con opciones para contar respuestas. */
 export interface QuestionForCounting {
   id: string;
-  options?: Array<{ letter: string; steamTrait: string }> | null;
+  options?: Array<{
+    id?: string;
+    letter?: string;
+    steamTrait: string;
+  }> | null;
 }
 
 /**
- * Convierte las respuestas { [questionId]: letra } en el conteo crudo por
- * eje que consume A1: cada respuesta suma +1 al steamTrait de la opción
- * elegida. Respuestas sin pregunta u opción correspondiente se ignoran.
+ * Convierte las respuestas { [questionId]: optionId } en el conteo crudo por
+ * eje que consume A1. Para no invalidar resultados históricos, también acepta
+ * la letra que utilizaba el contrato anterior.
  */
 export function countAnswersByAxis(
   answers: Record<string, string>,
@@ -85,11 +89,13 @@ export function countAnswersByAxis(
     matematicas: 0,
   };
   const byId = new Map(questions.map((q) => [String(q.id), q]));
-  for (const [questionId, letter] of Object.entries(answers || {})) {
+  for (const [questionId, answerValue] of Object.entries(answers || {})) {
     const question = byId.get(String(questionId));
     if (!question?.options) continue;
     const option = question.options.find(
-      (o) => o.letter?.toUpperCase() === String(letter).toUpperCase(),
+      (o) =>
+        String(o.id || '') === String(answerValue) ||
+        o.letter?.toUpperCase() === String(answerValue).toUpperCase(),
     );
     if (!option) continue;
     const axis = normalizeAxisKey(option.steamTrait);

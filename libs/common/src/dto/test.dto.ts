@@ -5,19 +5,35 @@ import {
   ValidateNested,
   IsOptional,
   MaxLength,
+  IsUUID,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiProperty } from '@nestjs/swagger';
 
 export class CreateOptionDto {
+  @ApiProperty({
+    required: false,
+    description: 'ID estable de una opción existente',
+  })
+  @IsOptional()
+  @IsUUID()
+  id?: string;
+
   @ApiProperty({ example: 'Me gusta experimentar con química' })
   @IsString()
   text: string;
 
-  @ApiProperty({ example: 'A' })
+  @ApiProperty({
+    example: 'A',
+    required: false,
+    deprecated: true,
+    description:
+      'Identificador histórico; las respuestas nuevas usan el ID de la opción',
+  })
+  @IsOptional()
   @IsString()
   @MaxLength(1)
-  letter: string;
+  letter?: string;
 
   @ApiProperty({ example: 'ciencia' })
   @IsString()

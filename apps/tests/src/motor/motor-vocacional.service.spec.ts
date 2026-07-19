@@ -67,7 +67,7 @@ describe('MotorVocacionalService', () => {
       find: jest.fn().mockResolvedValue([
         {
           id: 'q1',
-          options: [{ letter: 'A', steamTrait: 'ciencia' }],
+          options: [{ id: 'option-1', letter: 'A', steamTrait: 'ciencia' }],
         },
       ]),
     };
@@ -111,7 +111,7 @@ describe('MotorVocacionalService', () => {
 
     await expect(
       service.computeProfileForApplication('user-1', {
-        theoreticalAnswers: { q1: 'A' },
+        theoreticalAnswers: { q1: 'option-1' },
       }),
     ).resolves.toEqual(PROFILE);
 
@@ -141,7 +141,7 @@ describe('MotorVocacionalService', () => {
     );
     expect(profileService.persistComputedProfile).toHaveBeenCalledWith(
       'user-1',
-      { theoreticalAnswers: { q1: 'A' } },
+      { theoreticalAnswers: { q1: 'option-1' } },
       PROFILE,
       expect.anything(),
     );

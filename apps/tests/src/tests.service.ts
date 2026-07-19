@@ -68,10 +68,10 @@ export class TestsService {
         }),
       );
       await optionRepo.save(
-        data.options.map((option: any) =>
+        this.normalizeQuestionOptions(data.options).map((option: any) =>
           optionRepo.create({
             text: option.text.trim(),
-            letter: option.letter.trim().toUpperCase(),
+            letter: option.letter,
             steamTrait: option.steamTrait,
             question,
           }),
@@ -114,20 +114,39 @@ export class TestsService {
       await questionRepo.save(question);
 
       if (data.options !== undefined) {
-        await optionRepo
-          .createQueryBuilder()
-          .delete()
-          .where('"questionId" = :id', { id })
-          .execute();
+        const existingById = new Map(
+          (question.options || []).map((option) => [option.id, option]),
+        );
+        for (const option of data.options) {
+          if (option?.id && !existingById.has(option.id)) {
+            throw new RpcException(
+              'Una opción no pertenece a la pregunta que se está editando.',
+            );
+          }
+        }
+        const normalized = this.normalizeQuestionOptions(
+          data.options,
+          existingById,
+        );
+        const retainedIds = new Set(
+          normalized.map((option) => option.id).filter(Boolean),
+        );
+        const removed = (question.options || []).filter(
+          (option) => !retainedIds.has(option.id),
+        );
+        if (removed.length) await optionRepo.remove(removed);
+
         await optionRepo.save(
-          data.options.map((option: any) =>
-            optionRepo.create({
+          normalized.map((option) => {
+            const existing = option.id ? existingById.get(option.id) : null;
+            return optionRepo.create({
+              ...(existing || {}),
               text: option.text.trim(),
-              letter: option.letter.trim().toUpperCase(),
+              letter: option.letter,
               steamTrait: option.steamTrait,
               question,
-            }),
-          ),
+            });
+          }),
         );
       }
 
@@ -149,26 +168,60 @@ export class TestsService {
     if (!Array.isArray(data?.options) || data.options.length < 2) {
       throw new RpcException('Cada pregunta necesita al menos 2 opciones.');
     }
-    const letters = new Set<string>();
+    if (data.options.length > 26) {
+      throw new RpcException('Cada pregunta admite hasta 26 opciones.');
+    }
+    const optionTexts = new Set<string>();
     for (const option of data.options) {
-      const letter = String(option?.letter || '')
-        .trim()
-        .toUpperCase();
-      if (!String(option?.text || '').trim() || !/^[A-Z]$/.test(letter)) {
-        throw new RpcException(
-          'Cada opción necesita texto y una letra de A a Z.',
-        );
+      const text = String(option?.text || '').trim();
+      if (!text) {
+        throw new RpcException('Cada opción necesita un texto de respuesta.');
       }
-      if (letters.has(letter)) {
+      const normalizedText = text.toLocaleLowerCase('es');
+      if (optionTexts.has(normalizedText)) {
         throw new RpcException(
-          `La letra ${letter} está repetida en la pregunta.`,
+          'Las opciones de una pregunta no pueden repetir el mismo texto.',
         );
       }
       if (!validTraits.has(option.steamTrait)) {
-        throw new RpcException(`Rasgo STEAM inválido en la opción ${letter}.`);
+        throw new RpcException(
+          'El área de puntuación de una opción no es válida.',
+        );
       }
-      letters.add(letter);
+      optionTexts.add(normalizedText);
     }
+  }
+
+  /**
+   * Las letras se conservan únicamente como referencia legacy en BD. El
+   * contrato público usa IDs estables y el panel ya no las solicita.
+   */
+  private normalizeQuestionOptions(
+    options: any[],
+    existingById: Map<string, Option> = new Map(),
+  ): Array<{ id?: string; text: string; letter: string; steamTrait: string }> {
+    const usedLetters = new Set<string>();
+    const availableLetters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
+
+    return options.map((option) => {
+      const existing = option?.id ? existingById.get(option.id) : undefined;
+      const requestedLetter = String(existing?.letter || option?.letter || '')
+        .trim()
+        .toUpperCase();
+      const letter =
+        (/^[A-Z]$/.test(requestedLetter) && !usedLetters.has(requestedLetter)
+          ? requestedLetter
+          : availableLetters.find(
+              (candidate) => !usedLetters.has(candidate),
+            )) || 'Z';
+      usedLetters.add(letter);
+      return {
+        ...(existing ? { id: existing.id } : {}),
+        text: String(option.text),
+        letter,
+        steamTrait: option.steamTrait,
+      };
+    });
   }
 
   async deleteQuestion(id: string) {

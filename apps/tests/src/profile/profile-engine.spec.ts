@@ -489,24 +489,24 @@ describe('Motor vocacional — Vectores de prueba (mandato §13)', () => {
       expect(normalizeAxisKey('otracosa')).toBeNull();
     });
 
-    it('suma +1 al steamTrait de la opción elegida por pregunta', () => {
+    it('suma +1 al steamTrait usando el ID estable de la opción', () => {
       const questions = [
         {
           id: 'q1',
           options: [
-            { letter: 'A', steamTrait: 'ciencia' },
-            { letter: 'B', steamTrait: 'arte' },
+            { id: 'q1-a', letter: 'A', steamTrait: 'ciencia' },
+            { id: 'q1-b', letter: 'B', steamTrait: 'arte' },
           ],
         },
         {
           id: 'q2',
           options: [
-            { letter: 'A', steamTrait: 'tecnologia' },
-            { letter: 'B', steamTrait: 'matematicas' },
+            { id: 'q2-a', letter: 'A', steamTrait: 'tecnologia' },
+            { id: 'q2-b', letter: 'B', steamTrait: 'matematicas' },
           ],
         },
       ];
-      const raw = countAnswersByAxis({ q1: 'B', q2: 'A' }, questions);
+      const raw = countAnswersByAxis({ q1: 'q1-b', q2: 'q2-a' }, questions);
       expect(raw).toEqual({
         ciencia: 0,
         tecnologia: 1,
@@ -514,6 +514,16 @@ describe('Motor vocacional — Vectores de prueba (mandato §13)', () => {
         artes: 1, // 'arte' legacy contó para 'artes'
         matematicas: 0,
       });
+    });
+
+    it('sigue aceptando letras de resultados históricos', () => {
+      const raw = countAnswersByAxis({ q1: 'A' }, [
+        {
+          id: 'q1',
+          options: [{ id: 'option-1', letter: 'A', steamTrait: 'ciencia' }],
+        },
+      ]);
+      expect(raw.ciencia).toBe(1);
     });
 
     it('ignora respuestas sin pregunta u opción correspondiente', () => {

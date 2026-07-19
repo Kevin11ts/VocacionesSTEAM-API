@@ -43,15 +43,46 @@ describe('TestsService admin contracts', () => {
     );
   });
 
-  it('rejects duplicated option letters in vocational questions', () => {
+  it('accepts options without public letters', () => {
     expect(() =>
       (service as any).assertQuestionPayload({
         text: 'Pregunta',
         options: [
-          { text: 'Uno', letter: 'A', steamTrait: 'ciencia' },
-          { text: 'Dos', letter: 'A', steamTrait: 'tecnologia' },
+          { text: 'Uno', steamTrait: 'ciencia' },
+          { text: 'Dos', steamTrait: 'tecnologia' },
+        ],
+      }),
+    ).not.toThrow();
+  });
+
+  it('rejects duplicated response text', () => {
+    expect(() =>
+      (service as any).assertQuestionPayload({
+        text: 'Pregunta',
+        options: [
+          { text: 'La misma respuesta', steamTrait: 'ciencia' },
+          { text: ' la misma respuesta ', steamTrait: 'tecnologia' },
         ],
       }),
     ).toThrow(RpcException);
+  });
+
+  it('assigns internal legacy letters while preserving existing option IDs', () => {
+    const existing = new Map([
+      ['option-1', { id: 'option-1', letter: 'C', text: 'Anterior' }],
+    ]);
+
+    const result = (service as any).normalizeQuestionOptions(
+      [
+        { id: 'option-1', text: 'Actualizada', steamTrait: 'ciencia' },
+        { text: 'Nueva', steamTrait: 'tecnologia' },
+      ],
+      existing,
+    );
+
+    expect(result).toEqual([
+      expect.objectContaining({ id: 'option-1', letter: 'C' }),
+      expect.objectContaining({ letter: 'A' }),
+    ]);
   });
 });
