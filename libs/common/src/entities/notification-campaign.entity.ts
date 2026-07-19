@@ -16,7 +16,7 @@ export class NotificationCampaign {
   @Column('text')
   message: string;
 
-  @Column({ length: 500, nullable: true })
+  @Column({ type: 'varchar', length: 500, nullable: true })
   url: string | null;
 
   @Column({ length: 40 })

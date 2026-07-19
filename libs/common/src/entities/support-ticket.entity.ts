@@ -40,10 +40,10 @@ export class SupportTicket {
   @Column({ length: 20, default: 'open' })
   status: string;
 
-  @Column({ length: 255, nullable: true })
+  @Column({ type: 'varchar', length: 255, nullable: true })
   attachmentName: string | null;
 
-  @Column({ length: 100, nullable: true })
+  @Column({ type: 'varchar', length: 100, nullable: true })
   attachmentMimeType: string | null;
 
   @Column({ type: 'integer', nullable: true })

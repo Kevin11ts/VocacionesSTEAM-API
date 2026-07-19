@@ -33,7 +33,7 @@ export class PushSubscriptionEntity {
   @Column('text')
   auth: string;
 
-  @Column({ length: 500, nullable: true })
+  @Column({ type: 'varchar', length: 500, nullable: true })
   userAgent: string | null;
 
   @Column({ default: 0 })

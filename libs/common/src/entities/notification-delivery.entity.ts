@@ -32,10 +32,10 @@ export class NotificationDelivery {
   status: string;
 
   @Index({ unique: true })
-  @Column({ length: 180, nullable: true })
+  @Column({ type: 'varchar', length: 180, nullable: true })
   dedupeKey: string | null;
 
-  @Column({ length: 255, nullable: true })
+  @Column({ type: 'varchar', length: 255, nullable: true })
   recipient: string | null;
 
   @Column('text', { nullable: true })
