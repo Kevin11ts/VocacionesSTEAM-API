@@ -4,6 +4,8 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { JwtModule } from '@nestjs/jwt';
 
 import { AuthGatewayController } from './auth.controller';
+import { ApiGatewayController } from './api-gateway.controller';
+import { ApiGatewayService } from './api-gateway.service';
 import { UsersGatewayController } from './users.controller';
 import { TestsGatewayController } from './tests.controller';
 import { AiLogsGatewayController } from './ai-logs.controller';
@@ -120,6 +122,7 @@ import {
     ]),
   ],
   controllers: [
+    ApiGatewayController,
     AuthGatewayController,
     UsersGatewayController,
     TestsGatewayController,
@@ -146,6 +149,12 @@ import {
     NotificationsGatewayController,
     AdminNotificationsGatewayController,
   ],
-  providers: [JwtStrategy, JwtRefreshStrategy, GoogleStrategy, RolesGuard],
+  providers: [
+    ApiGatewayService,
+    JwtStrategy,
+    JwtRefreshStrategy,
+    GoogleStrategy,
+    RolesGuard,
+  ],
 })
 export class ApiGatewayModule {}

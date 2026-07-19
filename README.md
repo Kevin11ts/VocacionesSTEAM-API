@@ -31,6 +31,9 @@
 $ npm install
 ```
 
+Configura las variables de `.env.example`. `DB_SYNCHRONIZE` debe permanecer en
+`false`; el esquema se administra exclusivamente mediante migraciones.
+
 ## Compile and run the project
 
 ```bash
@@ -41,6 +44,7 @@ $ npm run start
 $ npm run start:dev
 
 # production mode
+$ npm run build
 $ npm run start:prod
 ```
 
@@ -55,6 +59,45 @@ $ npm run test:e2e
 
 # test coverage
 $ npm run test:cov
+```
+
+## Migraciones de PostgreSQL
+
+La fuente de datos de TypeORM está en
+`libs/common/src/database/typeorm-cli.datasource.ts` y carga todas las entidades
+y migraciones del monorepo.
+
+```bash
+# ver el estado
+$ npm run migration:show
+
+# comprobar que entidades y esquema no tengan drift
+$ npm run migration:check
+
+# generar una migración después de modificar entidades
+$ npm run migration:generate
+
+# aplicar o revertir
+$ npm run migration:run
+$ npm run migration:revert
+```
+
+La migración inicial crea el esquema completo para una base vacía. Para una base
+existente que ya fue creada previamente con `synchronize`, primero se debe hacer
+un respaldo, ejecutar `migration:check` y, solo si no reporta drift, registrar
+la migración inicial sin ejecutar su SQL:
+
+```bash
+$ npm run migration:baseline
+```
+
+Ese baseline se ejecuta una sola vez. Después, cada despliegue aplica
+`migration:run` normalmente. Las imágenes del gateway y del monolito incluyen
+un runner compilado sin `ts-node` y lo ejecutan antes de iniciar el servidor.
+También puede invocarse manualmente con:
+
+```bash
+$ npm run migration:run:prod
 ```
 
 ## Deployment

@@ -13,6 +13,7 @@ RUN npm ci
 COPY . .
 # Construimos el proyecto monolith definido en nest-cli.json
 RUN npm run build:monolith
+RUN npm run build:migrations
 
 # ==========================================
 # Etapa 2: Producción (Ligera)
@@ -31,5 +32,5 @@ COPY --from=builder /app/dist ./dist
 # Puerto que expone Railway
 EXPOSE 3000
 
-# Script para arrancar la versión monolito
-CMD ["npm", "run", "start:monolith"]
+# Aplicar cambios de esquema antes de aceptar tráfico y arrancar el monolito.
+CMD ["sh", "-c", "npm run migration:run:prod && npm run start:monolith"]

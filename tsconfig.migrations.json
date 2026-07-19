@@ -1,0 +1,17 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "declaration": false,
+    "incremental": false,
+    "outDir": "./dist/migrations-runtime",
+    "rootDir": ".",
+    "sourceMap": false
+  },
+  "include": [
+    "apps/migrations/src/**/*.ts",
+    "libs/common/src/database/typeorm-cli.datasource.ts",
+    "libs/common/src/database/migrations/**/*.ts",
+    "libs/common/src/entities/**/*.ts"
+  ],
+  "exclude": ["node_modules", "dist", "**/*.spec.ts"]
+}

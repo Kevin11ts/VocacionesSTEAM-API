@@ -14,9 +14,13 @@ describe('ApiGatewayController', () => {
     apiGatewayController = app.get<ApiGatewayController>(ApiGatewayController);
   });
 
-  describe('root', () => {
-    it('should return "Hello World!"', () => {
-      expect(apiGatewayController.getHello()).toBe('Hello World!');
+  describe('health', () => {
+    it('reports the gateway as available', () => {
+      const health = apiGatewayController.getHealth();
+
+      expect(health.status).toBe('ok');
+      expect(health.service).toBe('api-gateway');
+      expect(Number.isNaN(Date.parse(health.timestamp))).toBe(false);
     });
   });
 });

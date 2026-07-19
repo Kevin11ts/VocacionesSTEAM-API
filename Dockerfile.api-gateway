@@ -7,7 +7,7 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm ci
 COPY . .
-RUN npm run build api-gateway
+RUN npm run build api-gateway && npm run build:migrations
 
 ################################
 # Stage 2: Production
@@ -20,4 +20,4 @@ RUN npm ci --only=production
 COPY --from=builder /app/dist ./dist
 
 EXPOSE 3000
-CMD ["node", "dist/apps/api-gateway/main"]
+CMD ["sh", "-c", "npm run migration:run:prod && node dist/apps/api-gateway/main"]

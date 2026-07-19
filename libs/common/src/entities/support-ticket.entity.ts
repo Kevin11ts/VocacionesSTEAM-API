@@ -15,15 +15,18 @@ export class SupportTicket {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Index({ unique: true })
+  @Index('UQ_support_tickets_reference', { unique: true })
   @Column({ length: 32 })
   reference: string;
 
   @ManyToOne(() => User, { onDelete: 'CASCADE' })
-  @JoinColumn({ name: 'userId' })
+  @JoinColumn({
+    name: 'userId',
+    foreignKeyConstraintName: 'support_tickets_userId_fkey',
+  })
   user: User;
 
-  @Index()
+  @Index('IDX_support_tickets_user')
   @Column('uuid')
   userId: string;
 
@@ -36,7 +39,7 @@ export class SupportTicket {
   @Column('text')
   message: string;
 
-  @Index()
+  @Index('IDX_support_tickets_status')
   @Column({ length: 20, default: 'open' })
   status: string;
 
@@ -58,9 +61,9 @@ export class SupportTicket {
   @Column({ type: 'timestamptz', nullable: true })
   repliedAt: Date | null;
 
-  @CreateDateColumn()
+  @CreateDateColumn({ type: 'timestamptz' })
   createdAt: Date;
 
-  @UpdateDateColumn()
+  @UpdateDateColumn({ type: 'timestamptz' })
   updatedAt: Date;
 }

@@ -43,6 +43,6 @@ export class NotificationCampaign {
   @Column({ type: 'timestamptz', nullable: true })
   sentAt: Date | null;
 
-  @CreateDateColumn()
+  @CreateDateColumn({ type: 'timestamptz' })
   createdAt: Date;
 }

@@ -16,14 +16,17 @@ export class PushSubscriptionEntity {
   id: string;
 
   @ManyToOne(() => User, { onDelete: 'CASCADE' })
-  @JoinColumn({ name: 'userId' })
+  @JoinColumn({
+    name: 'userId',
+    foreignKeyConstraintName: 'push_subscriptions_userId_fkey',
+  })
   user: User;
 
-  @Index()
+  @Index('IDX_push_subscriptions_user')
   @Column('uuid')
   userId: string;
 
-  @Index({ unique: true })
+  @Index('UQ_push_subscriptions_endpoint', { unique: true })
   @Column('text')
   endpoint: string;
 
@@ -42,9 +45,9 @@ export class PushSubscriptionEntity {
   @Column({ type: 'timestamptz', nullable: true })
   lastSuccessAt: Date | null;
 
-  @CreateDateColumn()
+  @CreateDateColumn({ type: 'timestamptz' })
   createdAt: Date;
 
-  @UpdateDateColumn()
+  @UpdateDateColumn({ type: 'timestamptz' })
   updatedAt: Date;
 }

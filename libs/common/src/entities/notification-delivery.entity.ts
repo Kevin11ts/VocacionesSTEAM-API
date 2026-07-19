@@ -15,10 +15,13 @@ export class NotificationDelivery {
   id: string;
 
   @ManyToOne(() => User, { onDelete: 'CASCADE' })
-  @JoinColumn({ name: 'userId' })
+  @JoinColumn({
+    name: 'userId',
+    foreignKeyConstraintName: 'notification_deliveries_userId_fkey',
+  })
   user: User;
 
-  @Index()
+  @Index('IDX_notification_deliveries_user')
   @Column('uuid')
   userId: string;
 
@@ -31,7 +34,10 @@ export class NotificationDelivery {
   @Column({ length: 20 })
   status: string;
 
-  @Index({ unique: true })
+  @Index('UQ_notification_deliveries_dedupe', {
+    unique: true,
+    where: '"dedupeKey" IS NOT NULL',
+  })
   @Column({ type: 'varchar', length: 180, nullable: true })
   dedupeKey: string | null;
 
@@ -41,6 +47,6 @@ export class NotificationDelivery {
   @Column('text', { nullable: true })
   error: string | null;
 
-  @CreateDateColumn()
+  @CreateDateColumn({ type: 'timestamptz' })
   createdAt: Date;
 }

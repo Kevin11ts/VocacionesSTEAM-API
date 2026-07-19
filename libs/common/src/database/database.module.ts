@@ -18,7 +18,10 @@ import { ConfigService } from '@nestjs/config';
             // entorno temporal se puede habilitar de forma explícita.
             synchronize:
               configService.get<string>('DB_SYNCHRONIZE', 'false') === 'true',
-            ssl: { rejectUnauthorized: false }, // Requerido por Railway
+            ssl:
+              configService.get<string>('DB_SSL', 'true') === 'true'
+                ? { rejectUnauthorized: false }
+                : false,
           };
         }
         // Fallback para desarrollo local
@@ -31,7 +34,7 @@ import { ConfigService } from '@nestjs/config';
           database: configService.get<string>('DB_NAME', 'steam_vocations'),
           autoLoadEntities: true,
           synchronize:
-            configService.get<string>('DB_SYNCHRONIZE', 'true') === 'true',
+            configService.get<string>('DB_SYNCHRONIZE', 'false') === 'true',
         };
       },
     }),
