@@ -1,4 +1,4 @@
-import { Injectable, Inject } from '@nestjs/common';
+import { Injectable, Inject, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import {
@@ -7,6 +7,7 @@ import {
   LoginDto,
   ForgotPasswordDto,
   ResetPasswordDto,
+  ResendRegistrationOtpDto,
   User,
   OtpCode,
   UserSettings,
@@ -14,9 +15,15 @@ import {
 import { JwtService } from '@nestjs/jwt';
 import { ClientProxy, RpcException } from '@nestjs/microservices';
 import * as bcrypt from 'bcrypt';
+import { randomInt } from 'crypto';
+import { lastValueFrom, timeout } from 'rxjs';
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+  private readonly otpCooldownMs = 60_000;
+  private readonly mailTimeoutMs = 15_000;
+
   constructor(
     @InjectRepository(User) private readonly userRepository: Repository<User>,
     @InjectRepository(OtpCode)
@@ -26,34 +33,56 @@ export class AuthService {
   ) {}
 
   async register(data: RegisterDto) {
+    const email = data.email.trim().toLowerCase();
     const existingUser = await this.userRepository.findOne({
-      where: { email: data.email },
+      where: { email },
     });
     if (existingUser) {
+      if (!existingUser.isEmailVerified && existingUser.password) {
+        return this.generateAndSendOtp(email, 'register');
+      }
       throw new RpcException('El correo electrónico ya está en uso');
     }
 
     const hashedPassword = await bcrypt.hash(data.password, 10);
     const user = this.userRepository.create({
-      email: data.email,
+      email,
       password: hashedPassword,
       fullname: data.fullname,
       settings: new UserSettings(),
     });
     await this.userRepository.save(user);
 
-    return this.generateAndSendOtp(data.email, 'register');
+    return this.generateAndSendOtp(email, 'register');
+  }
+
+  async resendRegistrationOtp(data: ResendRegistrationOtpDto) {
+    const email = data.email.trim().toLowerCase();
+    const user = await this.userRepository.findOne({ where: { email } });
+
+    // Respuesta indistinguible para no revelar si una dirección está registrada.
+    if (!user || user.isEmailVerified || !user.password) {
+      return {
+        message:
+          'Si existe una cuenta pendiente de verificación, recibirás un nuevo código.',
+        retryAfterSeconds: 60,
+      };
+    }
+
+    return this.generateAndSendOtp(email, 'register');
   }
 
   async verifyOtp(data: VerifyOtpDto) {
+    const email = data.email.trim().toLowerCase();
+
     const otpRecord = await this.otpRepository.findOne({
-      where: { email: data.email, code: data.code, purpose: data.purpose },
+      where: { email, code: data.code, purpose: data.purpose },
     });
 
     if (!otpRecord) {
       // Intentar encontrar cualquier OTP para este email y propósito para incrementar intentos
       const anyOtp = await this.otpRepository.findOne({
-        where: { email: data.email, purpose: data.purpose },
+        where: { email, purpose: data.purpose },
       });
 
       if (anyOtp) {
@@ -77,10 +106,20 @@ export class AuthService {
       throw new RpcException('El código ha expirado');
     }
 
+    // Recuperación solo confirma que el código es válido. No crea sesión y
+    // no consume todavía el OTP: resetPassword lo vuelve a validar y lo
+    // elimina atómicamente al guardar la nueva contraseña.
+    if (data.purpose === 'recovery') {
+      return {
+        verified: true,
+        message: 'Código de recuperación verificado.',
+      };
+    }
+
     await this.otpRepository.remove(otpRecord);
 
     const user = await this.userRepository.findOne({
-      where: { email: data.email },
+      where: { email },
       relations: ['settings'],
     });
     if (!user) throw new RpcException('Usuario no encontrado');
@@ -96,8 +135,9 @@ export class AuthService {
   }
 
   async login(data: LoginDto) {
+    const email = data.email.trim().toLowerCase();
     const user = await this.userRepository.findOne({
-      where: { email: data.email },
+      where: { email },
     });
     if (!user || !user.password) {
       throw new RpcException('Credenciales inválidas');
@@ -146,13 +186,14 @@ export class AuthService {
   }
 
   async forgotPassword(data: ForgotPasswordDto) {
+    const email = data.email.trim().toLowerCase();
     const user = await this.userRepository.findOne({
-      where: { email: data.email },
+      where: { email },
     });
     if (!user) {
       // Respuesta genérica para no revelar si el correo existe
       return {
-        message: `Si el correo ${data.email} está registrado, se ha enviado un código.`,
+        message: `Si el correo ${email} está registrado, se ha enviado un código.`,
       };
     }
 
@@ -163,17 +204,22 @@ export class AuthService {
       );
     }
 
-    return this.generateAndSendOtp(data.email, 'recovery');
+    await this.generateAndSendOtp(email, 'recovery');
+    return {
+      message: `Si el correo ${email} está registrado, se ha enviado un código.`,
+      retryAfterSeconds: 60,
+    };
   }
 
   async resetPassword(data: ResetPasswordDto) {
+    const email = data.email.trim().toLowerCase();
     const otpRecord = await this.otpRepository.findOne({
-      where: { email: data.email, code: data.code, purpose: 'recovery' },
+      where: { email, code: data.code, purpose: 'recovery' },
     });
 
     if (!otpRecord) {
       const anyOtp = await this.otpRepository.findOne({
-        where: { email: data.email, purpose: 'recovery' },
+        where: { email, purpose: 'recovery' },
       });
 
       if (anyOtp) {
@@ -200,11 +246,16 @@ export class AuthService {
     await this.otpRepository.remove(otpRecord);
 
     const user = await this.userRepository.findOne({
-      where: { email: data.email },
+      where: { email },
     });
     if (!user) throw new RpcException('Usuario no encontrado');
 
     user.password = await bcrypt.hash(data.newPassword, 10);
+    // Una recuperación de contraseña debe cerrar las sesiones que pudieron
+    // quedar en manos de quien comprometió la contraseña anterior.
+    user.hashedRefreshToken = null;
+    user.failedLoginAttempts = 0;
+    user.lockUntil = null;
     await this.userRepository.save(user);
 
     return { message: 'Contraseña actualizada exitosamente' };
@@ -256,7 +307,21 @@ export class AuthService {
     email: string,
     purpose: 'register' | 'recovery' | 'login',
   ) {
-    const code = Math.floor(100000 + Math.random() * 900000).toString(); // 6 dígitos
+    const existingOtp = await this.otpRepository.findOne({
+      where: { email, purpose },
+    });
+    if (existingOtp?.createdAt) {
+      const elapsedMs = Date.now() - existingOtp.createdAt.getTime();
+      if (elapsedMs < this.otpCooldownMs) {
+        const seconds = Math.ceil((this.otpCooldownMs - elapsedMs) / 1000);
+        throw new RpcException(
+          `Espera ${seconds} segundos antes de solicitar otro código.`,
+        );
+      }
+    }
+
+    // Generador criptográficamente seguro; Math.random no es adecuado para OTP.
+    const code = randomInt(100000, 1_000_000).toString();
     const expiresAt = new Date();
     expiresAt.setMinutes(expiresAt.getMinutes() + 15);
 
@@ -268,14 +333,35 @@ export class AuthService {
       purpose,
       expiresAt,
     });
-    await this.otpRepository.save(newOtp);
+    const savedOtp = await this.otpRepository.save(newOtp);
 
-    // Enviar mensaje asíncrono al servicio de correo
-    this.mailClient.emit('mail.send-otp', { email, code, purpose });
+    try {
+      // Request-response: solo confirmamos éxito cuando Mail/Brevo confirmó la
+      // entrega. El timeout evita dejar una petición HTTP colgada.
+      const delivery = await lastValueFrom(
+        this.mailClient
+          .send<{
+            delivered: boolean;
+          }>({ cmd: 'mail.send-otp' }, { email, code, purpose })
+          .pipe(timeout(this.mailTimeoutMs)),
+      );
+      if (!delivery?.delivered) {
+        throw new Error('El servicio de correo no confirmó la entrega');
+      }
+    } catch (error) {
+      await this.otpRepository.delete({ id: savedOtp.id });
+      this.logger.error(
+        `No se pudo entregar OTP de propósito ${purpose} a ${email}`,
+        error instanceof Error ? error.stack : undefined,
+      );
+      throw new RpcException(
+        'No se pudo enviar el código por correo. Intenta de nuevo más tarde.',
+      );
+    }
 
     return {
-      message: `Código enviado a ${email}`,
-      otpCode: code, // Solo para desarrollo/pruebas
+      message: 'Código enviado por correo.',
+      retryAfterSeconds: 60,
     };
   }
 
@@ -340,6 +426,50 @@ export class AuthService {
     }
   }
 
+  /**
+   * Fuente de verdad para cada request autenticado. El gateway no confía en
+   * el rol/estado congelado dentro del JWT: consulta la cuenta vigente y falla
+   * cerrado si fue eliminada, desverificada, suspendida o baneada.
+   */
+  async validateSession(userId: string): Promise<{
+    active: boolean;
+    message?: string;
+    user?: { id: string; email: string; role: string };
+  }> {
+    const user = await this.userRepository.findOne({ where: { id: userId } });
+    if (!user) return { active: false, message: 'La cuenta ya no existe.' };
+    if (user.isBanned) {
+      return {
+        active: false,
+        message: user.suspensionReason
+          ? `Cuenta suspendida permanentemente: ${user.suspensionReason}`
+          : 'Cuenta suspendida permanentemente.',
+      };
+    }
+    if (user.suspendedUntil && user.suspendedUntil > new Date()) {
+      return {
+        active: false,
+        message: user.suspensionReason
+          ? `Cuenta suspendida: ${user.suspensionReason}`
+          : 'Cuenta suspendida temporalmente.',
+      };
+    }
+    if (!user.isEmailVerified) {
+      return { active: false, message: 'El correo no está verificado.' };
+    }
+
+    if (user.suspendedUntil || user.suspensionReason) {
+      user.suspendedUntil = null;
+      user.suspensionReason = null;
+      await this.userRepository.save(user);
+    }
+
+    return {
+      active: true,
+      user: { id: user.id, email: user.email, role: user.role },
+    };
+  }
+
   async generateTokens(user: User) {
     const accessToken = this.jwtService.sign({
       sub: user.id,
@@ -349,7 +479,7 @@ export class AuthService {
 
     const refreshToken = this.jwtService.sign(
       { sub: user.id },
-      { expiresIn: '7d' }
+      { expiresIn: '7d' },
     );
 
     user.hashedRefreshToken = await bcrypt.hash(refreshToken, 10);
@@ -359,9 +489,17 @@ export class AuthService {
   }
 
   async refreshTokens(userId: string, refreshToken: string) {
-    const user = await this.userRepository.findOne({ where: { id: userId }, relations: ['settings'] });
+    const user = await this.userRepository.findOne({
+      where: { id: userId },
+      relations: ['settings'],
+    });
     if (!user || !user.hashedRefreshToken) {
       throw new RpcException('Acceso denegado');
+    }
+
+    this.assertNotSuspended(user);
+    if (!user.isEmailVerified) {
+      throw new RpcException('El correo no está verificado');
     }
 
     const isMatch = await bcrypt.compare(refreshToken, user.hashedRefreshToken);

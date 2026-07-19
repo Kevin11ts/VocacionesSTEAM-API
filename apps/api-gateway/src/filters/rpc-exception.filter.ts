@@ -67,9 +67,12 @@ export class RpcToHttpExceptionFilter {
 
     // Mapeo dinámico para mensajes con variables
     if (!statusCode) {
-      if (
+      if (message.includes('No se pudo enviar el código por correo')) {
+        statusCode = HttpStatus.SERVICE_UNAVAILABLE;
+      } else if (
         message.includes('bloqueada') ||
-        message.includes('Demasiados intentos fallidos')
+        message.includes('Demasiados intentos fallidos') ||
+        message.includes('antes de solicitar otro código')
       ) {
         statusCode = HttpStatus.TOO_MANY_REQUESTS;
       } else if (message.includes('Código inválido')) {

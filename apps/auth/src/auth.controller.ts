@@ -7,6 +7,7 @@ import {
   LoginDto,
   ForgotPasswordDto,
   ResetPasswordDto,
+  ResendRegistrationOtpDto,
 } from '@app/common';
 
 @Controller()
@@ -16,6 +17,11 @@ export class AuthController {
   @MessagePattern({ cmd: 'auth.register' })
   async register(@Payload() payload: RegisterDto) {
     return this.authService.register(payload);
+  }
+
+  @MessagePattern({ cmd: 'auth.resend-registration-otp' })
+  async resendRegistrationOtp(@Payload() payload: ResendRegistrationOtpDto) {
+    return this.authService.resendRegistrationOtp(payload);
   }
 
   @MessagePattern({ cmd: 'auth.verify-otp' })
@@ -64,7 +70,14 @@ export class AuthController {
   }
 
   @MessagePattern({ cmd: 'auth.refresh' })
-  async refreshTokens(@Payload() payload: { userId: string; refreshToken: string }) {
+  async refreshTokens(
+    @Payload() payload: { userId: string; refreshToken: string },
+  ) {
     return this.authService.refreshTokens(payload.userId, payload.refreshToken);
+  }
+
+  @MessagePattern({ cmd: 'auth.validate-session' })
+  async validateSession(@Payload() userId: string) {
+    return this.authService.validateSession(userId);
   }
 }

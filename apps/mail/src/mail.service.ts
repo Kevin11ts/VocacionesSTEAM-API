@@ -4,7 +4,7 @@ import { BrevoClient } from '@getbrevo/brevo';
 
 @Injectable()
 export class MailService {
-  private apiInstance: BrevoClient;
+  private apiInstance?: BrevoClient;
   private readonly logger = new Logger(MailService.name);
 
   constructor(private configService: ConfigService) {
@@ -25,7 +25,7 @@ export class MailService {
       this.logger.error(
         'Cannot send email: Brevo API instance not initialized (missing API Key)',
       );
-      return;
+      throw new Error('El servicio de correo no está configurado');
     }
 
     const frontendUrl = this.configService.get<string>(
@@ -151,11 +151,13 @@ export class MailService {
       this.logger.log(
         'Correo enviado satisfactoriamente: ' + JSON.stringify(data),
       );
+      return { delivered: true };
     } catch (error: any) {
       this.logger.error(`Falló el envío de correo a ${email}`, error);
       if (error.body) {
         this.logger.error('Brevo Error Detail:', JSON.stringify(error.body));
       }
+      throw new Error('No se pudo entregar el correo con el código');
     }
   }
 }

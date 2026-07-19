@@ -116,7 +116,11 @@ export class UsersService {
       clean.title = String(updateData.title).trim() || 'Explorador STEAM';
     }
     if (updateData.isEmailVerified !== undefined) {
-      clean.isEmailVerified = Boolean(updateData.isEmailVerified);
+      const nextVerified = Boolean(updateData.isEmailVerified);
+      if (user.isEmailVerified && !nextVerified) {
+        clean.hashedRefreshToken = null;
+      }
+      clean.isEmailVerified = nextVerified;
     }
     if (updateData.role !== undefined) {
       const nextRole = updateData.role === 'admin' ? 'admin' : 'student';
@@ -127,6 +131,11 @@ export class UsersService {
           );
         }
         await this.assertNotLastAdmin();
+      }
+      if (user.role !== nextRole) {
+        // El próximo refresh no debe reutilizar una sesión emitida con el rol
+        // anterior. El access token restante se revalida contra BD en gateway.
+        clean.hashedRefreshToken = null;
       }
       clean.role = nextRole;
     }

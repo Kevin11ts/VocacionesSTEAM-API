@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Controller,
   Post,
   Get,
@@ -18,6 +19,7 @@ import {
   ForgotPasswordDto,
   ResetPasswordDto,
   LoginResponseDto,
+  ResendRegistrationOtpDto,
 } from '@app/common';
 import { lastValueFrom } from 'rxjs';
 import { AuthGuard } from '@nestjs/passport';
@@ -43,15 +45,34 @@ export class AuthGatewayController {
     );
   }
 
+  @Post('resend-registration-otp')
+  @ApiOperation({ summary: 'Reenviar OTP de una cuenta aún no verificada' })
+  @ApiResponse({
+    status: 201,
+    description: 'Respuesta genérica; nunca incluye el código OTP.',
+  })
+  @ApiBody({ type: ResendRegistrationOtpDto })
+  async resendRegistrationOtp(@Body() body: ResendRegistrationOtpDto) {
+    return lastValueFrom(
+      this.authClient.send({ cmd: 'auth.resend-registration-otp' }, body),
+    );
+  }
+
   @Post('verify-otp')
-  @ApiOperation({ summary: 'Verify OTP code (for register or recovery)' })
+  @ApiOperation({ summary: 'Verify registration or recovery OTP code' })
   @ApiResponse({
     status: 200,
-    description: 'OTP Verified, JWT returned (except for recovery).',
+    description:
+      'Registration returns JWT; recovery only confirms validity and never creates a session.',
     type: LoginResponseDto,
   })
   @ApiBody({ type: VerifyOtpDto })
   async verifyOtp(@Body() verifyOtpDto: VerifyOtpDto) {
+    if (verifyOtpDto.purpose === 'login') {
+      throw new BadRequestException(
+        'Los códigos de inicio de sesión deben verificarse en verify-login.',
+      );
+    }
     return lastValueFrom(
       this.authClient.send({ cmd: 'auth.verify-otp' }, verifyOtpDto),
     );
@@ -139,13 +160,21 @@ export class AuthGatewayController {
   @UseGuards(JwtRefreshGuard)
   @ApiOperation({ summary: 'Refresh tokens using a valid refresh token' })
   @ApiResponse({ status: 200, description: 'Tokens refreshed successfully.' })
-  @ApiBody({ schema: { type: 'object', properties: { refreshToken: { type: 'string' } } } })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: { refreshToken: { type: 'string' } },
+    },
+  })
   async refresh(@Req() req: any) {
     return lastValueFrom(
-      this.authClient.send({ cmd: 'auth.refresh' }, {
-        userId: req.user.id,
-        refreshToken: req.user.refreshToken,
-      })
+      this.authClient.send(
+        { cmd: 'auth.refresh' },
+        {
+          userId: req.user.id,
+          refreshToken: req.user.refreshToken,
+        },
+      ),
     );
   }
 }

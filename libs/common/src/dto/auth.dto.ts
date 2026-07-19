@@ -83,6 +83,15 @@ export class VerifyOtpDto {
   purpose: string;
 }
 
+export class ResendRegistrationOtpDto {
+  @ApiProperty({
+    example: 'correo@ejemplo.com',
+    description: 'Correo de una cuenta que todavía no ha sido verificada',
+  })
+  @IsEmail({}, { message: 'El correo electrónico no tiene un formato válido' })
+  email: string;
+}
+
 export class LoginDto {
   @ApiProperty({
     example: 'correo@ejemplo.com',
