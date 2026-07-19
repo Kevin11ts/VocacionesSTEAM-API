@@ -7,11 +7,27 @@ import {
   AlgorithmRun,
   ProfileComputationRequest,
   Question,
+  SimulatorBiasFlags,
+  SimulatorDecisionInput,
   SteamAxis,
+  VocationalProfile,
+  VocationalTest,
 } from '@app/common';
 import { CatalogService } from '../profile/catalog.service';
 import { ProfileService } from '../profile/profile.service';
 import { countAnswersByAxis } from '../profile/profile-engine';
+
+interface RemoteProfileResponse {
+  algorithm: string;
+  version: string;
+  executionTimeMs: number;
+  algorithmBreakdown: unknown;
+  profile: VocationalProfile;
+}
+
+export interface PersistedMotorProfile extends RemoteProfileResponse {
+  runId: string;
+}
 
 /**
  * Cliente del Motor Vocacional API: el servicio externo (FastAPI en
@@ -99,11 +115,22 @@ export class MotorVocacionalService {
     const apiKey = this.configService.get<string>('MOTOR_VOCACIONAL_API_KEY');
     if (apiKey) headers['X-API-Key'] = apiKey;
 
-    const response = await fetch(`${this.baseUrl}${path}`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(body),
-    });
+    let response: Response;
+    try {
+      response = await fetch(`${this.baseUrl}${path}`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(15000),
+      });
+    } catch (error) {
+      const detail =
+        error instanceof Error
+          ? error.message
+          : 'error de conexión desconocido';
+      this.logger.error(`Motor Vocacional ${path} no disponible: ${detail}`);
+      throw new RpcException('Motor Vocacional no disponible');
+    }
     if (!response.ok) {
       const detail = await response.text().catch(() => '');
       this.logger.error(
@@ -125,7 +152,7 @@ export class MotorVocacionalService {
   async computeProfileRemote(
     userId: string,
     request: ProfileComputationRequest,
-  ) {
+  ): Promise<PersistedMotorProfile> {
     const raw = await this.countTheoretical(request.theoreticalAnswers);
     const calibrationResults =
       request.calibrationResults ??
@@ -138,19 +165,16 @@ export class MotorVocacionalService {
       this.catalogService.getCareerCatalog(),
     ]);
 
-    const motorResponse = await this.post<{
-      algorithm: string;
-      version: string;
-      executionTimeMs: number;
-      algorithmBreakdown: unknown;
-      profile: { profileVersion?: string };
-    }>('/v1/profile/compute', {
-      theoreticalCounts: raw,
-      calibrationResults,
-      simulatorResults,
-      vocationCatalog,
-      careerCatalog,
-    });
+    const motorResponse = await this.post<RemoteProfileResponse>(
+      '/v1/profile/compute',
+      {
+        theoreticalCounts: raw,
+        calibrationResults,
+        simulatorResults,
+        vocationCatalog,
+        careerCatalog,
+      },
+    );
 
     const run = await this.runRepository.save(
       this.runRepository.create({
@@ -166,6 +190,78 @@ export class MotorVocacionalService {
     );
 
     return { runId: run.id, ...motorResponse };
+  }
+
+  /**
+   * Flujo canónico de la aplicación: calcula en FastAPI, registra la corrida
+   * y persiste el mismo perfil en el historial que consume la PWA.
+   */
+  async computeAndPersistProfile(
+    userId: string,
+    request: ProfileComputationRequest,
+  ): Promise<{
+    test: VocationalTest;
+    profile: VocationalProfile;
+    run: PersistedMotorProfile;
+  }> {
+    const run = await this.computeProfileRemote(userId, request);
+    const test = await this.profileService.persistComputedProfile(
+      userId,
+      request,
+      run.profile,
+    );
+    return { test, profile: run.profile, run };
+  }
+
+  /** Contrato directo que ya consume POST /profile/compute en Angular. */
+  async computeProfileForApplication(
+    userId: string,
+    request: ProfileComputationRequest,
+  ): Promise<VocationalProfile> {
+    const { profile } = await this.computeAndPersistProfile(userId, request);
+    return profile;
+  }
+
+  /**
+   * Recalcula el último test con la evidencia vigente de calibraciones y
+   * simuladores. Cada recálculo también genera una fila en algorithm_runs.
+   */
+  async recomputeLatestProfile(
+    userId: string,
+  ): Promise<VocationalProfile | null> {
+    const request =
+      await this.profileService.getLatestComputationRequest(userId);
+    if (!request) return null;
+
+    const run = await this.computeProfileRemote(userId, request);
+    return this.profileService.updateLatestComputedProfile(userId, run.profile);
+  }
+
+  async submitCalibrationAndRecompute(
+    userId: string,
+    moduleId: string,
+    answers: Array<{ axis: SteamAxis; liked: boolean }>,
+  ) {
+    await this.profileService.saveCalibration(userId, moduleId, answers);
+    const profile = await this.recomputeLatestProfile(userId);
+    return { success: true, moduleId, profile };
+  }
+
+  async submitSimulatorAndRecompute(
+    userId: string,
+    careerSlug: string,
+    decisions: SimulatorDecisionInput[],
+    biasFlags?: SimulatorBiasFlags,
+  ) {
+    const { affinity, feedback } =
+      await this.profileService.saveSimulatorResult(
+        userId,
+        careerSlug,
+        decisions,
+        biasFlags,
+      );
+    const profile = await this.recomputeLatestProfile(userId);
+    return { success: true, affinity, feedback, profile };
   }
 
   /** Corridas persistidas del usuario (resultados consultables). */

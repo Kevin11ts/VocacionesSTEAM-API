@@ -49,7 +49,7 @@ export class TestsController {
     return this.motorVocacionalService.getMetrics();
   }
 
-  // --- Motor de perfil vocacional (A1-A7) ---
+  // --- Flujo canónico de perfil: Motor Vocacional FastAPI (A1-A7) ---
   @MessagePattern({ cmd: 'tests.compute-profile' })
   async computeProfile(
     @Payload()
@@ -58,7 +58,10 @@ export class TestsController {
       request: ProfileComputationRequest;
     },
   ) {
-    return this.profileService.computeProfile(payload.userId, payload.request);
+    return this.motorVocacionalService.computeProfileForApplication(
+      payload.userId,
+      payload.request,
+    );
   }
 
   @MessagePattern({ cmd: 'tests.submit-calibration-recompute' })
@@ -70,7 +73,7 @@ export class TestsController {
       answers: Array<{ axis: SteamAxis; liked: boolean }>;
     },
   ) {
-    return this.profileService.submitCalibrationAndRecompute(
+    return this.motorVocacionalService.submitCalibrationAndRecompute(
       payload.userId,
       payload.moduleId,
       payload.answers,
@@ -95,7 +98,7 @@ export class TestsController {
       };
     },
   ) {
-    return this.profileService.submitSimulatorAndRecompute(
+    return this.motorVocacionalService.submitSimulatorAndRecompute(
       payload.userId,
       payload.careerSlug,
       payload.decisions,
@@ -142,11 +145,23 @@ export class TestsController {
       locationInput?: string;
     },
   ) {
-    return this.testsService.submitTest(
-      payload.userId,
-      payload.answers,
-      payload.locationInput,
-    );
+    const { test, profile } =
+      await this.motorVocacionalService.computeAndPersistProfile(
+        payload.userId,
+        {
+          theoreticalAnswers: payload.answers,
+          locationInput: payload.locationInput,
+        },
+      );
+
+    return {
+      testId: test.id,
+      scores: profile.steamScores,
+      dominantTraits: test.dominantTraits,
+      aiProfileDescription: profile.profileSummary,
+      recommendations: [],
+      profile,
+    };
   }
 
   @MessagePattern({ cmd: 'tests.get-history' })

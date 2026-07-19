@@ -10,6 +10,7 @@ import {
   SimulatorAffinityResult,
   SimulatorBiasFlags,
   SimulatorDecisionInput,
+  SimulatorFeedbackResponse,
   User,
   UserHistory,
   VocationalTest,
@@ -88,9 +89,6 @@ export class ProfileService {
     userId: string,
     request: ProfileComputationRequest,
   ): Promise<{ test: VocationalTest; profile: VocationalProfile }> {
-    const user = await this.userRepository.findOne({ where: { id: userId } });
-    if (!user) throw new RpcException('User not found');
-
     const raw = await this.countTheoretical(request.theoreticalAnswers);
     const calibrationResults =
       request.calibrationResults ?? (await this.loadStoredCalibrations(userId));
@@ -103,11 +101,27 @@ export class ProfileService {
       calibrationResults,
       simulatorResults,
     );
+    const test = await this.persistComputedProfile(userId, request, profile);
+    return { test, profile };
+  }
+
+  /**
+   * Persiste un perfil ya calculado por el Motor Vocacional remoto. Mantiene
+   * el contrato de historial de la aplicación sin volver a ejecutar la copia
+   * local del algoritmo.
+   */
+  async persistComputedProfile(
+    userId: string,
+    request: ProfileComputationRequest,
+    profile: VocationalProfile,
+  ): Promise<VocationalTest> {
+    const user = await this.userRepository.findOne({ where: { id: userId } });
+    if (!user) throw new RpcException('User not found');
 
     const testCount = await this.testsRepository.count({
       where: { user: { id: userId } },
     });
-    let test = this.testsRepository.create({
+    const test = this.testsRepository.create({
       user,
       testName: `Test Vocacional ${testCount + 1}`,
       answers: request.theoreticalAnswers,
@@ -115,9 +129,36 @@ export class ProfileService {
       dominantTraits: this.legacyDominantTraits(profile.dominantAxes),
       profile,
     });
-    test = await this.testsRepository.save(test);
+    return this.testsRepository.save(test);
+  }
 
-    return { test, profile };
+  /** Entrada teórica del test más reciente, necesaria para recalcularlo. */
+  async getLatestComputationRequest(
+    userId: string,
+  ): Promise<ProfileComputationRequest | null> {
+    const test = await this.testsRepository.findOne({
+      where: { user: { id: userId } },
+      order: { completedAt: 'DESC' },
+    });
+    return test ? { theoreticalAnswers: test.answers } : null;
+  }
+
+  /** Actualiza el último historial con un perfil calculado fuera de NestJS. */
+  async updateLatestComputedProfile(
+    userId: string,
+    profile: VocationalProfile,
+  ): Promise<VocationalProfile | null> {
+    const test = await this.testsRepository.findOne({
+      where: { user: { id: userId } },
+      order: { completedAt: 'DESC' },
+    });
+    if (!test) return null;
+
+    test.profileScores = { ...profile.steamScores } as Record<string, number>;
+    test.dominantTraits = this.legacyDominantTraits(profile.dominantAxes);
+    test.profile = profile;
+    await this.testsRepository.save(test);
+    return profile;
   }
 
   /**
@@ -129,6 +170,17 @@ export class ProfileService {
     moduleId: string,
     answers: Array<{ axis: SteamAxis; liked: boolean }>,
   ) {
+    await this.saveCalibration(userId, moduleId, answers);
+    const profile = await this.recomputeLatestProfile(userId);
+    return { success: true, moduleId, profile };
+  }
+
+  /** Guarda una calibración sin decidir qué motor recalculará el perfil. */
+  async saveCalibration(
+    userId: string,
+    moduleId: string,
+    answers: Array<{ axis: SteamAxis; liked: boolean }>,
+  ): Promise<void> {
     const user = await this.userRepository.findOne({ where: { id: userId } });
     if (!user) throw new RpcException('User not found');
 
@@ -145,9 +197,6 @@ export class ProfileService {
       });
     }
     await this.calibrationRepository.save(calibration);
-
-    const profile = await this.recomputeLatestProfile(userId);
-    return { success: true, moduleId, profile };
   }
 
   /**
@@ -161,6 +210,29 @@ export class ProfileService {
     decisions: SimulatorDecisionInput[],
     biasFlags?: SimulatorBiasFlags,
   ) {
+    const { affinity, feedback } = await this.saveSimulatorResult(
+      userId,
+      careerSlug,
+      decisions,
+      biasFlags,
+    );
+    const profile = await this.recomputeLatestProfile(userId);
+    return { success: true, affinity, feedback, profile };
+  }
+
+  /**
+   * Calcula y guarda la evidencia del simulador. El perfil se recalcula por
+   * separado para permitir que el orquestador use el motor FastAPI.
+   */
+  async saveSimulatorResult(
+    userId: string,
+    careerSlug: string,
+    decisions: SimulatorDecisionInput[],
+    biasFlags?: SimulatorBiasFlags,
+  ): Promise<{
+    affinity: SimulatorAffinityResult;
+    feedback: SimulatorFeedbackResponse;
+  }> {
     const user = await this.userRepository.findOne({ where: { id: userId } });
     if (!user) throw new RpcException('User not found');
 
@@ -205,9 +277,7 @@ export class ProfileService {
       });
     }
     await this.userHistoryRepository.save(history);
-
-    const profile = await this.recomputeLatestProfile(userId);
-    return { success: true, affinity: result, feedback, profile };
+    return { affinity: result, feedback };
   }
 
   /**
